@@ -63,8 +63,12 @@ ltx-2-mlx generate --prompt "A scene" --distilled -H 720 -W 1280 -o distilled.mp
 # One-stage dev + CFG (full target res, mirrors upstream TI2VidOneStagePipeline)
 ltx-2-mlx generate --prompt "A scene" --one-stage -o one_stage.mp4
 
-# Audio-to-Video
+# Audio-to-Video (official-compatible two-stage quality path)
 ltx-2-mlx a2v --prompt "Music video" --audio music.wav -o a2v.mp4
+
+# Experimental one-stage A2V draft (use a small canvas for actual speed)
+ltx-2-mlx a2v --prompt "Music video" --audio music.wav --one-stage \
+  --steps 12 -H 320 -W 512 -f 97 --frame-rate 24 -o a2v_draft.mp4
 
 # Retake (regenerate frames 1-3 of a video)
 ltx-2-mlx retake --prompt "New action" --video source.mp4 --start 1 --end 3 -o retake.mp4
@@ -203,12 +207,14 @@ ltx-2-mlx generate   T2V / I2V / two-stage / HQ generation
   --enhance-prompt    Enhance prompt with Gemma before generation
   --quiet, -q         Suppress progress output
 
-ltx-2-mlx a2v        Audio-to-Video (two-stage, dev model + CFG)
+ltx-2-mlx a2v        Audio-to-Video (two-stage default; experimental one-stage draft)
   --audio, -a         Input audio file (required)
   --frame-rate        Output frame rate (required; LTX-2.3 trained at 24)
   --image, -i         Reference image for I2V (optional)
   --two-stages-hq                HQ mode (res_2s sampler for stage 1)
   --audio-start       Audio start time in seconds (default: 0)
+  --one-stage         Skip upsampling/refinement and denoise once at target resolution
+  --steps             One-stage denoising steps (default: 16)
   --cfg-scale         CFG guidance scale (default: 3.0)
   --stg-scale         STG guidance scale (default: 0.0)
   --stage1-steps      Stage 1 steps (default: 30 standard, 15 HQ)

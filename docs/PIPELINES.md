@@ -19,6 +19,7 @@ by tier, see [PIPELINE_MATURITY.md](PIPELINE_MATURITY.md).
 | `generate --two-stages-hq` | `TI2VidTwoStagesHQPipeline` | T2V / I2V | res_2s + CFG (15 steps × 2 sub-steps) | Euler distilled (3) | q8 + dev LoRA | ✅ | 0.0 |
 | `generate --distilled` | `DistilledPipeline` | T2V / I2V | Euler distilled (8 steps) at half-res | Euler distilled (3) at full-res | q8 (distilled only) | ❌ | — |
 | `a2v` *(beta)* | `A2VidPipelineTwoStage` | A2V (+ optional I2V) | Euler + CFG (30) | Euler distilled (3) | q8 + dev LoRA | ✅ (audio cfg=7) | 0.0 |
+| `a2v --one-stage` *(experimental)* | `A2VidPipelineOneStage` | A2V (+ optional I2V) | Euler + CFG (16) at **full** resolution | — | q8 + dev LoRA | ✅ (input audio frozen) | 1.0 |
 | `keyframe` | `KeyframeInterpolationPipeline` | start frame ↔ end frame | Euler + CFG (30) | Euler distilled (3) | q8 + dev LoRA | ✅ | 0.0 |
 | `ic-lora` | `ICLoraPipeline` | V2V (control video) + optional I2V | Euler distilled (8) | Euler distilled (3) | q8 + control LoRA | ❌ | — |
 | `hdr-ic-lora` | `HDRICLoraPipeline(ICLoraPipeline)` | V2V / pure T2V / +I2V → linear HDR | Euler distilled (8) | Euler distilled (3) | q8 + HDR LoRA | ❌ | — |
@@ -50,7 +51,7 @@ by tier, see [PIPELINE_MATURITY.md](PIPELINE_MATURITY.md).
 | `generate --two-stage` | `--frame-rate` (required), `--stage1-steps` (30), `--stage2-steps` (3), `--cfg-scale` (3.0), `--stg-scale` (0.0), `--image`, `--distilled-lora-strength` (1.0), `--enable-teacache`, `--teacache-thresh` |
 | `generate --two-stages-hq` | same as two-stage but stage1 default 15 steps, res_2s sampler |
 | `generate --distilled` | `--frame-rate` (required), `--stage1-steps` (8 default), `--stage2-steps` (3 default), `--image`. No CFG/STG/TeaCache flags (distilled flow). Same DiT in both stages — no LoRA swap. |
-| `a2v` | `--audio` (required), `--image`, `--audio-start`, `--frame-rate` (required), all two-stage flags |
+| `a2v` | `--audio` (required), `--image`, `--audio-start`, `--frame-rate` (required); default uses two-stage flags. `--one-stage --steps N` selects the local experimental full-resolution draft path. |
 | `keyframe` | `--start` / `--end` (image paths, required), `--frame-rate` (required), all two-stage flags |
 | `ic-lora` | `--frame-rate` (required), `--lora PATH STRENGTH` (required, repeatable), `--video-conditioning PATH STRENGTH` (required, repeatable), `--conditioning-strength` (1.0), `--image`, `--skip-stage-2`, `--stage1-steps`, `--stage2-steps` |
 | `hdr-ic-lora` | same as `ic-lora`, but `--video-conditioning` is **optional** (omit for pure T2V HDR). Auto-detects HDR transform from LoRA metadata. Outputs `.mp4` SDR + `.hdr.npz` linear HDR fp32 |
@@ -67,4 +68,5 @@ by tier, see [PIPELINE_MATURITY.md](PIPELINE_MATURITY.md).
 - Modality tiling overhead dominates over memory benefit at default Nv (1650-3168). Use only when targeting 1080p / 8s+ on Mac Studio 64-128 GB; on 32 GB Mac, prefer `--low-ram` alone.
 - `generate` requires a mode flag (`--one-stage`, `--two-stage`, `--two-stages-hq`, or `--distilled`). There is **no implicit default** — every pipeline maps 1:1 to an upstream Lightricks/LTX-2 class.
 - `generate --one-stage` vs `generate --two-stage`: same dev model + CFG, but `--one-stage` runs **once at the target resolution** (no upscaler dependency, simpler latents for downstream). `--two-stage` runs at half-res then upscales 2× and refines (typically faster overall and better at large targets). Pick `--one-stage` for native res ≤ 480×704 or if you don't trust the upsampler; pick `--two-stage` for everything else.
+- The same performance caveat applies to experimental `a2v --one-stage`: skipping stage 2 only improves draft latency when the requested target itself is small. It preserves the input waveform in the output and freezes its latent during the single denoise stage.
 - `generate --distilled` vs `generate --two-stage`: same half-res + upscale structure, but `--distilled` skips CFG entirely (8 stage 1 steps × 1 forward instead of 30 × 2-4). Fastest mode; quality slightly below the dev+CFG variants.
