@@ -276,6 +276,7 @@ class ICLoraPipeline(BasePipeline):
                     spatial_dims=(F_lat, H_lat, W_lat),
                     video_encoder=video_encoder,
                     frame_rate=frame_rate,
+                    model_dir=self.model_dir,
                 )
             )
 
@@ -477,6 +478,7 @@ class ICLoraPipeline(BasePipeline):
                     spatial_dims=(F_full, H_full_lat, W_full_lat),
                     video_encoder=self.vae_encoder,
                     frame_rate=frame_rate,
+                    model_dir=self.model_dir,
                 )
             )
 

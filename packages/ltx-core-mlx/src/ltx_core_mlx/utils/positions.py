@@ -107,3 +107,40 @@ def compute_audio_positions(
     mids = (starts + ends) / 2.0
 
     return mids[None, :, None]
+
+
+def compute_keyframes_mask(
+    num_latent_frames: int,
+    height: int,
+    width: int,
+    num_appended_tokens: int = 0,
+    batch: int = 1,
+) -> mx.array:
+    """Build the LTX-2.5 keyframes mask marking the first latent frame's tokens.
+
+    The keyframe absolute-position embedding is applied to video tokens whose
+    latent encodes a *single standalone pixel frame* — the target's first
+    latent frame (the video encoder is causal, so latent frame 0 covers pixel
+    frame 0 only) plus any generated keyframe slots. Appended conditioning
+    tokens (image-conditioning keyframes / references) are explicitly NOT
+    marked, matching ComfyUI ``keyframes_abs_pos_mask`` (guide tokens are
+    excluded) and ltx-core ``keyframes_mask`` semantics.
+
+    Args:
+        num_latent_frames: Number of latent frames F (the target's first
+            latent frame, i.e. tokens ``[0, H*W)``, is marked).
+        height: Latent height H.
+        width: Latent width W.
+        num_appended_tokens: Extra tokens appended after the generation
+            tokens (keyframes / references); left unmarked.
+        batch: Batch size.
+
+    Returns:
+        Mask ``(B, num_latent_frames * H * W + num_appended_tokens, 1)``
+        of zeros/ones (1 marks single-pixel-frame tokens).
+    """
+    tokens_per_frame = height * width
+    num_tokens = num_latent_frames * tokens_per_frame + num_appended_tokens
+    mask = mx.zeros((batch, num_tokens, 1))
+    mask[:, :tokens_per_frame, :] = 1.0
+    return mask

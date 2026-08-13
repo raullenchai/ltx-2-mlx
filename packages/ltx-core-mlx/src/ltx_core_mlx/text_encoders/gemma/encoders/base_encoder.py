@@ -300,6 +300,67 @@ class GemmaLanguageModel(nn.Module):
         return _load_system_prompt("gemma_i2v_system_prompt.txt")
 
 
+class Gemma4LanguageModel(GemmaLanguageModel):
+    """Gemma 4 12B (LTX-2.5 text encoder) wrapper via mlx-lm.
+
+    Loads a local MLX checkpoint directory produced by
+    ``scripts/convert_ltx25_to_mlx.py --step text-encoder``: ``config.json``
+    with ``model_type: "gemma4"`` + an embedded ``text_config`` (48 layers,
+    hidden 3840, 16 heads x 256, 8 kv heads + 1 global, k_eq_v on the 8
+    full-attention layers, rope proportional 0.25@1e6 / default@1e4),
+    ``model.safetensors`` (keys ``language_model.model.*`` after sanitize)
+    and ``tokenizer.json``/``tokenizer_config.json`` extracted from the
+    official single-file.
+
+    Inherits the 49-hidden-state collection (embedding + 48 layers) from
+    :class:`GemmaLanguageModel` — gemma4's ``DecoderLayer.__call__`` returns
+    a plain array (not a tuple), which the parent handles; the layer call
+    ``layer(h, mask=..., cache=None)`` is signature-compatible.
+    """
+
+    # LTX-2.5 gemma4-12b-ltx-v1 specs (used for validation on load).
+    EXPECTED_LAYERS = 48
+    EXPECTED_HIDDEN = 3840
+
+    def load(self, model_path: str | None = None) -> None:
+        """Load the Gemma 4 model via mlx-lm and validate the architecture."""
+        super().load(model_path)
+        self._validate()
+
+    def _validate(self) -> None:
+        """Validate the loaded model is gemma4-12b-ltx-v1 (or the expected shape).
+
+        Override ``EXPECTED_LAYERS`` / ``EXPECTED_HIDDEN`` (e.g. in tests with
+        a tiny in-memory model) to relax the architecture check.
+        """
+        model = self._model
+        if model is None:
+            raise RuntimeError("Model not loaded. Call load() first.")
+        model_type = getattr(model, "model_type", None)
+        if model_type != "gemma4":
+            raise ValueError(
+                f"Gemma4LanguageModel requires a gemma4 mlx-lm checkpoint "
+                f"(config.json model_type='gemma4'), got {model_type!r}"
+            )
+        # Navigate to the inner text model (same path as get_all_hidden_states).
+        inner = model
+        for attr in ("model", "language_model", "model"):
+            if hasattr(inner, attr):
+                inner = getattr(inner, attr)
+            if hasattr(inner, "embed_tokens"):
+                break
+        num_layers = len(getattr(inner, "layers", []))
+        hidden = getattr(getattr(inner, "config", None), "hidden_size", None)
+        if num_layers != self.EXPECTED_LAYERS:
+            raise ValueError(
+                f"gemma4-12b-ltx-v1 expected {self.EXPECTED_LAYERS} layers, found {num_layers}"
+            )
+        if hidden is not None and hidden != self.EXPECTED_HIDDEN:
+            raise ValueError(
+                f"gemma4-12b-ltx-v1 expected hidden_size {self.EXPECTED_HIDDEN}, found {hidden}"
+            )
+
+
 @functools.lru_cache(maxsize=2)
 def _load_system_prompt(prompt_name: str) -> str:
     """Load a system prompt file from the prompts directory."""

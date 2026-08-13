@@ -358,6 +358,13 @@ class TiledLTXModel:
             tile_kwargs["video_attention_mask"] = tiled_modality.attention_mask
             if "video_timesteps" in kwargs and kwargs["video_timesteps"] is not None:
                 tile_kwargs["video_timesteps"] = tiled_modality.timesteps
+            if "video_keyframes_mask" in kwargs and kwargs["video_keyframes_mask"] is not None:
+                keyframe_mask = kwargs["video_keyframes_mask"]
+                keep_idx = _bool_to_indices(ctx.keep_mask)
+                if keyframe_mask.ndim == 3:
+                    tile_kwargs["video_keyframes_mask"] = keyframe_mask[:, keep_idx, :]
+                else:
+                    tile_kwargs["video_keyframes_mask"] = keyframe_mask[:, keep_idx]
 
             tile_video_out, tile_audio_out = self._inner(**tile_kwargs)
 

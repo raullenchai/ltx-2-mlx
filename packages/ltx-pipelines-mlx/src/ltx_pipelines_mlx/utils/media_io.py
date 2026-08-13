@@ -35,13 +35,29 @@ from PIL import Image
 
 from ltx_core_mlx.utils.ffmpeg import find_ffmpeg
 
-# Upstream-verbatim default. Used by ``ImageConditioningInput.crf`` and by
+# Upstream-verbatim default (LTX-2.3 port). Used by ``ImageConditioningInput.crf`` and by
 # ``load_image_and_preprocess``. Round-tripping the input image through
 # libx264 at this CRF brings it close to the LTX-2 training distribution
 # (which is built from real video frames carrying H.264 compression
 # artefacts), preventing the model from over-reacting to pristine
 # PNG/JPEG textures during I2V conditioning.
 DEFAULT_IMAGE_CRF = 33
+
+# Official LTX-2.5 default. The 2.5 reference pipelines preprocess I2V
+# images at CRF 18 (inheriting ``DEFAULT_IMAGE_CRF = 33`` from the 2.3 port
+# over-compresses 2.5 inputs and hurts I2V quality).
+DEFAULT_IMAGE_CRF_V25 = 18
+
+
+def default_image_crf(model_version: str) -> int:
+    """Return the I2V image CRF default for a model version.
+
+    ``"2.5.0"`` (and any ``2.5*`` version) → 18 (official 2.5);
+    anything else (the 2.3 port) → 33 (upstream-verbatim).
+    """
+    if model_version.startswith("2.5"):
+        return DEFAULT_IMAGE_CRF_V25
+    return DEFAULT_IMAGE_CRF
 
 
 def to_vae_range(x: mx.array) -> mx.array:
@@ -283,8 +299,10 @@ def load_image_and_preprocess(
 
 __all__ = [
     "DEFAULT_IMAGE_CRF",
+    "DEFAULT_IMAGE_CRF_V25",
     "decode_image",
     "decode_single_frame",
+    "default_image_crf",
     "encode_single_frame",
     "from_vae_range",
     "load_image_and_preprocess",

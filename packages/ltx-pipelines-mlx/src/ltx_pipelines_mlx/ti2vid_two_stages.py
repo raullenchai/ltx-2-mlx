@@ -239,9 +239,16 @@ class TI2VidTwoStagesPipeline(BasePipeline):
         """
         import json
 
-        # Try new v1.1+ naming, then old naming
+        # Try new v1.1+ naming, then old naming, then the LTX-2.5 split-layout
+        # names (``spatial_upscaler_x2.safetensors``, ``ltx-2.5-*.safetensors``).
         weights_path = self.model_dir / "spatial_upscaler_x2_v1_1.safetensors"
-        for stem in ["ltx-2.3-spatial-upscaler-x2", "spatial_upscaler_x2_v1_1"]:
+        for stem in [
+            "ltx-2.3-spatial-upscaler-x2",
+            "spatial_upscaler_x2_v1_1",
+            "spatial_upscaler_x2",
+            "ltx-2.5-spatial-upscaler-x2",
+            "ltx-2.5-latent-spatial-upscaler-x2",
+        ]:
             resolved = self._resolve_safetensors(self.model_dir, stem)
             if resolved.exists():
                 weights_path = resolved
@@ -250,8 +257,9 @@ class TI2VidTwoStagesPipeline(BasePipeline):
         if not weights_path.exists():
             raise FileNotFoundError(
                 f"Spatial upsampler weights not found in {self.model_dir} "
-                "(looked for spatial_upscaler_x2_v1_1.safetensors and "
-                "ltx-2.3-spatial-upscaler-x2*.safetensors). The two-stage and "
+                "(looked for spatial_upscaler_x2_v1_1.safetensors, "
+                "ltx-2.3-spatial-upscaler-x2*.safetensors and the LTX-2.5 "
+                "spatial_upscaler_x2.safetensors). The two-stage and "
                 "distilled pipelines require it for stage-2 upscaling; without "
                 "it the latent is upscaled by an untrained module and the "
                 "output degrades into a periodic 'mosaic' grid. Download it, "
@@ -395,6 +403,7 @@ class TI2VidTwoStagesPipeline(BasePipeline):
                 spatial_dims=(F, H_half, W_half),
                 video_encoder=self.vae_encoder,
                 frame_rate=frame_rate,
+                model_dir=self.model_dir,
             )
 
         # Stage 1: scalar-blend-then-cond for video matches legacy create_initial_state
@@ -514,6 +523,7 @@ class TI2VidTwoStagesPipeline(BasePipeline):
                 spatial_dims=(F, H_full, W_full),
                 video_encoder=self.vae_encoder,
                 frame_rate=frame_rate,
+                model_dir=self.model_dir,
             )
 
         # Free VAE encoder + upsampler before Stage 2 denoising

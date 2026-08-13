@@ -195,8 +195,11 @@ class KeyframeInterpolationPipeline(TI2VidTwoStagesPipeline):
                 "Keyframe interpolation requires the dev (non-distilled) model. "
                 "The distilled model hallucinates unrelated content during interpolation.\n"
                 "Use: --dev-transformer transformer-dev.safetensors "
-                "--distilled-lora ltx-2.3-22b-distilled-lora-384.safetensors --cfg-scale 3.0\n"
-                "Model repo with both variants: dgrauet/ltx-2.3-mlx-q8"
+                "--distilled-lora <distilled LoRA of your model> --cfg-scale 3.0\n"
+                f"Model dir: {self.model_dir} (must contain transformer-dev.safetensors plus the "
+                "version-appropriate distilled LoRA, e.g. ltx-2.5-22b-distilled-lora-450.safetensors "
+                "for LTX-2.5 or ltx-2.3-22b-distilled-lora-384.safetensors for LTX-2.3, "
+                "e.g. dgrauet/ltx-2.3-mlx-q8)"
             )
         if self.dit is None:
             self.dit = self._load_dev_transformer()

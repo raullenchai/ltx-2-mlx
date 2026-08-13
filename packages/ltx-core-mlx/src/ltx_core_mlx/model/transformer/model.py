@@ -70,6 +70,9 @@ class LTXModelConfig:
     positional_embedding_max_pos: tuple[int, ...] = (20, 2048, 2048)
     audio_positional_embedding_max_pos: tuple[int, ...] = (20,)
     norm_eps: float = 1e-6
+    # LTX-2.5 deltas (all defaulted off so LTX-2.3 checkpoints load unchanged).
+    model_version: str = "2.3"
+    use_keyframes_abs_pos_embedding: bool = False
 
     @classmethod
     def from_checkpoint_config(cls, config: dict) -> LTXModelConfig:
@@ -117,6 +120,10 @@ class LTXModelConfig:
                 t.get("audio_positional_embedding_max_pos", d.audio_positional_embedding_max_pos)
             ),
             norm_eps=t.get("norm_eps", d.norm_eps),
+            model_version=t.get("model_version", d.model_version),
+            use_keyframes_abs_pos_embedding=t.get(
+                "use_keyframes_abs_pos_embedding", d.use_keyframes_abs_pos_embedding
+            ),
         )
 
     @classmethod
@@ -188,6 +195,18 @@ class LTXModel(nn.Module):
         self.scale_shift_table = mx.zeros((2, vd))
         self.audio_scale_shift_table = mx.zeros((2, ad))
 
+        # --- Keyframes absolute-position embedding (LTX-2.5) ---
+        # Added to video tokens whose latent encodes a single standalone
+        # pixel frame (temporal_start == 0): the target's first latent
+        # frame (causal VAE) plus generated keyframe slots. Shape (1, dim)
+        # per the 2.5 checkpoint (``keyframes_abs_pos_embedding``). Only
+        # registered when the checkpoint config opts in, so 2.3 checkpoints
+        # (which lack the tensor) keep loading with strict=True.
+        if config.use_keyframes_abs_pos_embedding:
+            self.keyframes_abs_pos_embedding = mx.zeros((1, vd))
+        else:
+            self.keyframes_abs_pos_embedding = None
+
         # --- Timestep AdaLN (9-param: self-attn shift/scale/gate x3) ---
         self.adaln_single = AdaLayerNormSingle(vd, num_params=9, timestep_dim=t_dim)
         self.audio_adaln_single = AdaLayerNormSingle(ad, num_params=9, timestep_dim=t_dim)
@@ -223,6 +242,51 @@ class LTXModel(nn.Module):
         # storing all 48 blocks' activations. Caps activation memory at ~1 block
         # so backprop through the dev model fits on 64 GB. No effect on inference.
         self.gradient_checkpointing = False
+
+    def _apply_keyframes_abs_pos_embedding(
+        self,
+        video_hidden: mx.array,
+        keyframes_mask: mx.array,
+    ) -> mx.array:
+        """Add the learned keyframe absolute-position embedding to marked tokens.
+
+        Reference: ComfyUI ``apply_keyframes_abs_pos_embedding`` / ltx-core
+        ``apply_keyframes_absolute_embedding`` — the (1, dim) embedding is
+        added to projected hidden states immediately after ``patchify_proj``
+        for tokens whose ``temporal_start == 0``. A no-op when the checkpoint
+        config did not set ``use_keyframes_abs_pos_embedding`` (2.3 path).
+
+        Args:
+            video_hidden: (B, Nv, video_dim) post-patchify video tokens.
+            keyframes_mask: (B, Nv) binary mask; non-zero marks single-frame
+                tokens (first latent frame / keyframe slots).
+
+        Returns:
+            ``video_hidden`` with the embedding added to marked tokens.
+        """
+        embedding = getattr(self, "keyframes_abs_pos_embedding", None)
+        if embedding is None:
+            return video_hidden
+        # Accept both the public (B, Nv) form and the helper's convenient
+        # (B, Nv, 1) form; normalize before broadcasting over the channel dim.
+        mask = keyframes_mask[..., 0] if keyframes_mask.ndim == 3 else keyframes_mask
+        mask = mask[..., None].astype(video_hidden.dtype)  # (B, Nv, 1)
+        return video_hidden + mask * embedding.astype(video_hidden.dtype)
+
+    def _infer_keyframes_mask(self, video_positions: mx.array | None) -> mx.array | None:
+        """Infer the LTX-2.5 keyframe mask from global video positions.
+
+        ``compute_video_positions`` emits one shared temporal midpoint for
+        every token in the first causal latent frame. Conditioning tokens are
+        appended after the generated grid, so selecting the global minimum
+        temporal coordinate also remains correct for tiled forwards: the
+        caller derives this mask before slicing a tile.
+        """
+        if not self.config.use_keyframes_abs_pos_embedding or video_positions is None:
+            return None
+        temporal = video_positions[..., 0]
+        first_temporal = mx.min(temporal, axis=1, keepdims=True)
+        return mx.equal(temporal, first_temporal)
 
     def _embed_timestep_scalar(
         self,
@@ -280,6 +344,8 @@ class LTXModel(nn.Module):
         audio_latent: mx.array,
         timestep: mx.array,
         video_timesteps: mx.array | None = None,
+        video_keyframes_mask: mx.array | None = None,
+        video_positions: mx.array | None = None,
     ) -> mx.array:
         """Cheap probe: block 0's modulated video input (TeaCache gate signal).
 
@@ -302,7 +368,12 @@ class LTXModel(nn.Module):
         video_latent = video_latent.astype(mx.bfloat16)
         timestep = timestep.astype(mx.bfloat16)
 
+        if video_keyframes_mask is None:
+            video_keyframes_mask = self._infer_keyframes_mask(video_positions)
+
         video_hidden = self.patchify_proj(video_latent)
+        if video_keyframes_mask is not None:
+            video_hidden = self._apply_keyframes_abs_pos_embedding(video_hidden, video_keyframes_mask)
         t_emb = self._embed_timestep_scalar(timestep)
 
         if video_timesteps is not None:
@@ -326,6 +397,7 @@ class LTXModel(nn.Module):
         audio_attention_mask: mx.array | None = None,
         video_timesteps: mx.array | None = None,
         audio_timesteps: mx.array | None = None,
+        video_keyframes_mask: mx.array | None = None,
         perturbations: BatchedPerturbationConfig | None = None,
         tap: callable | None = None,
         block_stack_override: callable | None = None,
@@ -347,6 +419,14 @@ class LTXModel(nn.Module):
                 When provided, AdaLN parameters are computed per-token instead
                 of per-batch, enabling preserved tokens (mask=0) to receive
                 timestep=0 (no modulation).
+            video_keyframes_mask: Optional (B, Nv) binary mask marking video
+                tokens that encode a single standalone pixel frame (temporal
+                start == 0: the target's first latent frame / keyframe slots).
+                When provided (and the checkpoint config sets
+                ``use_keyframes_abs_pos_embedding``), the learned
+                ``keyframes_abs_pos_embedding`` is added to those tokens
+                right after ``patchify_proj`` (LTX-2.5). No-op for 2.3
+                checkpoints (no parameter registered).
             audio_timesteps: Optional (B, Na) per-token timesteps for audio.
             perturbations: Optional perturbation config for STG guidance.
             tap: Optional callback ``tap(video_block_residual,
@@ -381,8 +461,13 @@ class LTXModel(nn.Module):
         if audio_text_embeds is not None:
             audio_text_embeds = audio_text_embeds.astype(mx.bfloat16)
 
+        if video_keyframes_mask is None:
+            video_keyframes_mask = self._infer_keyframes_mask(video_positions)
+
         # Embed patches
         video_hidden = self.patchify_proj(video_latent)
+        if video_keyframes_mask is not None:
+            video_hidden = self._apply_keyframes_abs_pos_embedding(video_hidden, video_keyframes_mask)
         audio_hidden = self.audio_patchify_proj(audio_latent)
 
         # --- Timestep embeddings ---
@@ -664,6 +749,17 @@ class X0Model(nn.Module):
         Returns:
             Tuple of (video_x0, audio_x0).
         """
+        # Derive the 2.5 mask once from the unsliced global positions. This
+        # keeps the first-frame marker correct when ``self.model`` is wrapped
+        # by TiledLTXModel; the wrapper slices the mask alongside the tokens.
+        if kwargs.get("video_keyframes_mask") is None:
+            infer_mask = getattr(self.model, "_infer_keyframes_mask", None)
+            video_positions = kwargs.get("video_positions")
+            if infer_mask is not None and video_positions is not None:
+                inferred = infer_mask(video_positions)
+                if inferred is not None:
+                    kwargs["video_keyframes_mask"] = inferred
+
         video_v, audio_v = self.model(
             video_latent=video_latent,
             audio_latent=audio_latent,

@@ -21,6 +21,8 @@ For dev model + CFG quality, see :class:`TI2VidTwoStagesPipeline` /
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import mlx.core as mx
 
 from ltx_core_mlx.components.patchifiers import compute_video_latent_shape
@@ -34,11 +36,39 @@ from ltx_core_mlx.utils.positions import (
 
 from .scheduler import DISTILLED_SIGMAS, STAGE_2_SIGMAS
 from .ti2vid_two_stages import TI2VidTwoStagesPipeline
+from .utils._orchestration import detect_model_version
 from .utils.helpers import create_noised_state
 from .utils.progress import phase
-from .utils.samplers import denoise_loop
+from .utils.samplers import ancestral_denoise_loop, denoise_loop
 
 _materialize = getattr(mx, "eval")  # noqa: B009 -- security hook flags mx.eval pattern
+
+# Generation from which stage 1 is sampled with the ancestral (SDE) Euler
+# sampler instead of the deterministic one. Mirrors upstream
+# ``ANCESTRAL_SAMPLER_SINCE_VERSION = (2, 5)``; ``detect_model_version``
+# returns "2.5.0" / "2.3", so the gate is a ``"2.5"`` prefix match.
+ANCESTRAL_SAMPLER_SINCE_VERSION = "2.5"
+
+# Fully ancestral noise injection: eta=0 is a plain Euler step, eta=1 injects
+# the full variance-preserving amount at every step (upstream verbatim).
+ANCESTRAL_ETA = 1.0
+ANCESTRAL_S_NOISE = 1.0
+
+# The loop's noise generator is seeded from the pipeline seed plus this offset
+# (upstream verbatim). Without it the loop's first draw would be bit-identical
+# to the initial latent noise: both draw the same-shaped randn from a freshly
+# seeded generator.
+ANCESTRAL_NOISE_SEED_OFFSET = 10000
+
+
+def should_use_ancestral_sampler(model_dir: str | Path) -> bool:
+    """Whether a checkpoint's generation calls for the ancestral stage-1 sampler.
+
+    LTX-2.5 (``detect_model_version(model_dir)`` starting with ``"2.5"``) →
+    True; the 2.3 port keeps the deterministic Euler stage 1 exactly as
+    before. Mirrors upstream ``should_use_ancestral_sampler(transformer_path)``.
+    """
+    return detect_model_version(model_dir).startswith(ANCESTRAL_SAMPLER_SINCE_VERSION)
 
 
 class DistilledPipeline(TI2VidTwoStagesPipeline):
@@ -49,8 +79,11 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
 
     - Skip negative-prompt encoding (no CFG).
     - Load the distilled transformer directly (no dev model, no LoRA fusion).
-    - Run simple ``denoise_loop`` with ``DISTILLED_SIGMAS`` for stage 1.
-    - Run the same distilled transformer for stage 2 with ``STAGE_2_SIGMAS``.
+    - Stage 1: ancestral (SDE) Euler sampler with ``DISTILLED_SIGMAS`` for
+      LTX-2.5 checkpoints (``should_use_ancestral_sampler``); the 2.3 port
+      keeps the deterministic ``denoise_loop`` exactly as before.
+    - Run the same distilled transformer for stage 2 with ``STAGE_2_SIGMAS``
+      (always deterministic).
 
     Args:
         model_dir: Path to model weights or HuggingFace repo ID. Must
@@ -77,6 +110,10 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
             low_ram_streaming=low_ram_streaming,
             tile_count=tile_count,
         )
+        # Stage-1 sampler selection (mirrors upstream ``DistilledPipeline``):
+        # LTX-2.5 checkpoints sample stage 1 with the ancestral (SDE) Euler
+        # sampler; the 2.3 port keeps the deterministic Euler loop.
+        self.use_ancestral_sampler = should_use_ancestral_sampler(self.model_dir)
 
     def load(self) -> None:
         """Load distilled DiT + VAE encoder + upsampler (skip decoders).
@@ -181,6 +218,7 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
                 spatial_dims=(F, H_half, W_half),
                 video_encoder=self.vae_encoder,
                 frame_rate=frame_rate,
+                model_dir=self.model_dir,
             )
 
         video_state = create_noised_state(
@@ -216,14 +254,30 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
         x0_model = X0Model(stage1_dit)
 
         self._pre_denoise_flush(video_state, audio_state)
-        output_1 = denoise_loop(
-            model=x0_model,
-            video_state=video_state,
-            audio_state=audio_state,
-            video_text_embeds=video_embeds,
-            audio_text_embeds=audio_embeds,
-            sigmas=sigmas_1,
-        )
+        if self.use_ancestral_sampler:
+            # LTX-2.5 stage 1: ancestral (SDE) Euler — fresh seeded noise per
+            # step (upstream ``ANCESTRAL_ETA`` / ``S_NOISE`` / seed offset).
+            output_1 = ancestral_denoise_loop(
+                model=x0_model,
+                video_state=video_state,
+                audio_state=audio_state,
+                video_text_embeds=video_embeds,
+                audio_text_embeds=audio_embeds,
+                sigmas=sigmas_1,
+                noise_seed=seed + ANCESTRAL_NOISE_SEED_OFFSET,
+                eta=ANCESTRAL_ETA,
+                s_noise=ANCESTRAL_S_NOISE,
+            )
+        else:
+            # 2.3 stage 1: deterministic Euler (unchanged behaviour).
+            output_1 = denoise_loop(
+                model=x0_model,
+                video_state=video_state,
+                audio_state=audio_state,
+                video_text_embeds=video_embeds,
+                audio_text_embeds=audio_embeds,
+                sigmas=sigmas_1,
+            )
         if self.low_memory:
             aggressive_cleanup()
 
@@ -255,6 +309,7 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
                 spatial_dims=(F, H_full, W_full),
                 video_encoder=self.vae_encoder,
                 frame_rate=frame_rate,
+                model_dir=self.model_dir,
             )
 
         if self.low_memory:
@@ -263,6 +318,8 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
             aggressive_cleanup()
 
         # --- Stage 2: full resolution refine (no LoRA swap — already distilled) ---
+        # Always deterministic — its 3-step refinement schedule is too short to
+        # remove freshly injected noise (upstream-verbatim).
         video_tokens, _ = self.video_patchifier.patchify(video_upscaled)
         sigmas_2 = STAGE_2_SIGMAS[: stage2_steps + 1] if stage2_steps else STAGE_2_SIGMAS
         start_sigma = sigmas_2[0]

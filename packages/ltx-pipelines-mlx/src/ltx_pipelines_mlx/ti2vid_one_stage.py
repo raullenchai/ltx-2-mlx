@@ -175,6 +175,7 @@ class TI2VidOneStagePipeline(TI2VidTwoStagesPipeline):
                 spatial_dims=(F, H, W),
                 video_encoder=self.vae_encoder,
                 frame_rate=frame_rate,
+                model_dir=self.model_dir,
             )
 
         video_state = create_noised_state(

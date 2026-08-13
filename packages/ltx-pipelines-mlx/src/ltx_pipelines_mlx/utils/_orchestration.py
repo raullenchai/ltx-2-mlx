@@ -37,6 +37,48 @@ def resolve_model_dir(model_dir: str | Path) -> Path:
     return Path(snapshot_download(str(model_dir)))
 
 
+def detect_model_version(model_dir: str | Path) -> str:
+    """Detect the LTX checkpoint version from a model dir's transformer config.
+
+    Reads ``embedded_config.json`` (preferred) or ``config.json`` in the model
+    dir and returns:
+
+    - ``"2.5.0"`` when the config sets ``use_keyframes_abs_pos_embedding: true``
+      (the LTX-2.5 DiT marker tensor) or an explicit ``model_version`` field
+      starting with ``2.5``;
+    - ``"2.3"`` otherwise (the local port's default).
+
+    The 2.5 transformer weights are otherwise 1:1 compatible with the 2.3
+    loader (same architecture / key names), so this only gates the text
+    encoder path and optional components.
+
+    Args:
+        model_dir: Local model directory (already resolved).
+
+    Returns:
+        ``"2.5.0"`` or ``"2.3"``.
+    """
+    import json
+
+    model_dir = Path(model_dir)
+    for name in ("embedded_config.json", "config.json"):
+        path = model_dir / name
+        if not path.exists():
+            continue
+        try:
+            config = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        transformer = config.get("transformer", config)
+        model_version = transformer.get("model_version")
+        if isinstance(model_version, str) and model_version.startswith("2.5"):
+            return "2.5.0"
+        if transformer.get("use_keyframes_abs_pos_embedding"):
+            return "2.5.0"
+        return "2.3"
+    return "2.3"
+
+
 def resolve_lora_path(path: str) -> str:
     """Resolve a LoRA path — return local path or download from HuggingFace.
 
@@ -209,6 +251,7 @@ def combined_image_conditionings(
     spatial_dims: tuple[int, int, int],
     video_encoder,
     frame_rate: float,
+    model_dir: str | Path | None = None,
 ):
     """Build a list of conditioning items from a list of input images.
 
@@ -226,6 +269,11 @@ def combined_image_conditionings(
         spatial_dims: ``(F, H, W)`` latent shape of the target video.
         video_encoder: VAE encoder instance (must expose ``encode``).
         frame_rate: Frame rate for keyframe positions.
+        model_dir: Optional model dir. When given, the image CRF default is
+            resolved per model version (LTX-2.5 → 18, 2.3 → 33); an explicit
+            ``crf`` on the conditioning item always wins, except an explicit
+            value equal to the 2.3 default (33) is treated as unset and
+            re-resolved for the active version.
 
     Returns:
         List of conditioning items ready to feed into
@@ -233,14 +281,24 @@ def combined_image_conditionings(
     """
     from ltx_core_mlx.conditioning.types.keyframe_cond import VideoConditionByKeyframeIndex
     from ltx_core_mlx.conditioning.types.latent_cond import VideoConditionByLatentIndex
-    from ltx_pipelines_mlx.utils.media_io import DEFAULT_IMAGE_CRF, load_image_and_preprocess
+    from ltx_pipelines_mlx.utils.media_io import (
+        DEFAULT_IMAGE_CRF,
+        default_image_crf,
+        load_image_and_preprocess,
+    )
+
+    # Per-version I2V image CRF default: the 2.3 port inherits upstream's 33;
+    # the official 2.5 pipelines preprocess at 18 (fix #4).
+    version_crf = default_image_crf(detect_model_version(model_dir)) if model_dir is not None else DEFAULT_IMAGE_CRF
 
     conditionings: list = []
     for img in images:
         # Forward the per-image CRF (upstream-iso). Falls back to the
-        # upstream default (33) if the image item doesn't expose a CRF
-        # field — preserves I2V quality alignment with training.
-        img_crf = getattr(img, "crf", DEFAULT_IMAGE_CRF)
+        # version-aware default (33 for 2.3, 18 for 2.5) when the image item
+        # doesn't expose a CRF field or still carries the 2.3 default.
+        img_crf = getattr(img, "crf", None)
+        if img_crf is None or img_crf == DEFAULT_IMAGE_CRF:
+            img_crf = version_crf
         img_tensor = load_image_and_preprocess(img.path, enc_h, enc_w, crf=img_crf)
         img_tensor = img_tensor[:, :, None, :, :]  # add F=1 dim
         ref_latent = video_encoder.encode(img_tensor)  # (1, 128, 1, H', W')
@@ -270,6 +328,7 @@ def combined_image_conditionings(
 __all__ = [
     "combined_image_conditionings",
     "decode_and_save_video",
+    "detect_model_version",
     "fuse_pending_loras",
     "load_dev_transformer",
     "load_transformer",

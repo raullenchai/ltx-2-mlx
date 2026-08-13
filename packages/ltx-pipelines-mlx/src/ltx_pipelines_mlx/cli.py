@@ -25,6 +25,32 @@ import time
 DEFAULT_MODEL = "dgrauet/ltx-2.3-mlx-q8"
 DEFAULT_GEMMA = "mlx-community/gemma-3-12b-it-4bit"
 
+# Distilled LoRA filenames per checkpoint version. LTX-2.5 ships
+# ``ltx-2.5-22b-distilled-lora-450.safetensors`` in its model dir; the 2.3
+# port uses ``ltx-2.3-22b-distilled-lora-384.safetensors``. The dev
+# transformer name (``transformer-dev.safetensors``) is identical in both.
+DISTILLED_LORA_2_3 = "ltx-2.3-22b-distilled-lora-384.safetensors"
+DISTILLED_LORA_2_5 = "ltx-2.5-22b-distilled-lora-450.safetensors"
+
+
+def _default_distilled_lora(model_dir: str) -> str:
+    """Return the distilled LoRA filename matching the checkpoint version.
+
+    Uses :func:`ltx_pipelines_mlx.utils._orchestration.detect_model_version`
+    on the (local or resolved) model dir: ``2.5.x`` picks the 450-step LoRA,
+    anything else keeps the 2.3 name. Unknown/unreadable dirs fall back to
+    the 2.3 default, preserving legacy behaviour.
+    """
+    from ltx_pipelines_mlx.utils._orchestration import detect_model_version, resolve_model_dir
+
+    # ``model_dir`` may still be a Hugging Face repo ID at CLI argument
+    # resolution time. Resolve it before reading the version marker; otherwise
+    # every remote checkpoint falls back to the legacy 2.3 LoRA filename.
+    version = detect_model_version(resolve_model_dir(model_dir))
+    if version.startswith("2.5"):
+        return DISTILLED_LORA_2_5
+    return DISTILLED_LORA_2_3
+
 
 def _add_base_args(parser: argparse.ArgumentParser) -> None:
     """Add base arguments shared by all subcommands (prompt, output, model, seed)."""
@@ -206,8 +232,12 @@ examples:
     )
     gen.add_argument(
         "--distilled-lora",
-        default="ltx-2.3-22b-distilled-lora-384.safetensors",
-        help="Distilled LoRA filename for stage 2 (default: ltx-2.3-22b-distilled-lora-384.safetensors)",
+        default=None,
+        help=(
+            "Distilled LoRA filename for stage 2 (default: version-aware — "
+            "ltx-2.5-22b-distilled-lora-450.safetensors for LTX-2.5 checkpoints, "
+            "ltx-2.3-22b-distilled-lora-384.safetensors for LTX-2.3)"
+        ),
     )
     gen.add_argument(
         "--distilled-lora-strength", type=float, default=1.0, help="Distilled LoRA strength for stage 2 (default: 1.0)"
@@ -247,11 +277,32 @@ examples:
     _add_generation_args(a2v)
     a2v.add_argument("--audio", "-a", required=True, help="Input audio file (WAV/MP3/etc.)")
     a2v.add_argument("--audio-start", type=float, default=0.0, help="Audio start time in seconds (default: 0)")
+    a2v.add_argument(
+        "--one-stage",
+        action="store_true",
+        help=(
+            "Experimental single-stage A2V at target resolution. Best for low-resolution drafts; "
+            "the standard two-stage path remains the quality/default path."
+        ),
+    )
+    a2v.add_argument("--steps", type=int, default=None, help="One-stage denoising steps (default: 16)")
     a2v.add_argument("--stage1-steps", type=int, default=None, help="Stage 1 steps (default: 30)")
     a2v.add_argument("--stage2-steps", type=int, default=None, help="Stage 2 steps (default: 3)")
     a2v.add_argument("--cfg-scale", type=float, default=None, help="CFG guidance scale (default: 3.0)")
     a2v.add_argument(
         "--stg-scale", type=float, default=None, help="STG guidance scale (default: 1.0 — upstream LTX_2_3_PARAMS)"
+    )
+    a2v.add_argument(
+        "--distilled-lora",
+        default=None,
+        help=(
+            "Distilled LoRA filename for stage 2 (default: version-aware — "
+            "ltx-2.5-22b-distilled-lora-450.safetensors for LTX-2.5 checkpoints, "
+            "ltx-2.3-22b-distilled-lora-384.safetensors for LTX-2.3)"
+        ),
+    )
+    a2v.add_argument(
+        "--distilled-lora-strength", type=float, default=1.0, help="Distilled LoRA strength for stage 2 (default: 1.0)"
     )
     a2v.add_argument(
         "--image",
@@ -316,13 +367,17 @@ examples:
     kf.add_argument("--stg-scale", type=float, default=None, help="Override STG scale (default: 1.0)")
     kf.add_argument(
         "--dev-transformer",
-        default=None,
-        help="Dev (non-distilled) transformer filename for higher quality stage 1 (e.g. transformer-dev.safetensors)",
+        default="transformer-dev.safetensors",
+        help="Dev transformer filename (default: transformer-dev.safetensors)",
     )
     kf.add_argument(
         "--distilled-lora",
         default=None,
-        help="Distilled LoRA filename for stage 2 refinement (e.g. ltx-2.3-22b-distilled-lora-384.safetensors)",
+        help=(
+            "Distilled LoRA filename for stage 2 refinement (default: version-aware — "
+            "ltx-2.5-22b-distilled-lora-450.safetensors for LTX-2.5 checkpoints, "
+            "ltx-2.3-22b-distilled-lora-384.safetensors for LTX-2.3)"
+        ),
     )
     kf.add_argument("--lora-strength", type=float, default=1.0, help="Distilled LoRA strength (default: 1.0)")
 
@@ -403,6 +458,9 @@ examples:
     )
     ld.add_argument("--stage1-steps", type=int, default=None)
     ld.add_argument("--stage2-steps", type=int, default=None)
+    ld.add_argument("--image", action="append", help="I2V anchor image path (repeatable, combined with --image-frame/--image-strength)")
+    ld.add_argument("--image-frame", action="append", type=int, default=[], help="Frame index for each --image (default: 0)")
+    ld.add_argument("--image-strength", action="append", type=float, default=[], help="Strength for each --image (default: 1.0)")
 
     # --- hdr-ic-lora ---
     hdr = sub.add_parser(
@@ -534,11 +592,15 @@ examples:
         parser.print_help()
         sys.exit(1)
 
-    # Resolve seed=-1 to a random value
-    if hasattr(args, "seed") and args.seed < 0:
-        import random
+    # Resolve seed=-1 to a random value and always print the concrete seed so
+    # callers (video-lab UI, logs) can reproduce runs.
+    if hasattr(args, "seed"):
+        if args.seed is None or args.seed < 0:
+            import random
 
-        args.seed = random.randint(0, 2**31 - 1)
+            args.seed = random.randint(0, 2**31 - 1)
+        if not getattr(args, "quiet", False):
+            print(f"Seed: {args.seed}", flush=True)
 
     commands = {
         "generate": _cmd_generate,
@@ -568,6 +630,12 @@ def _cmd_generate(args: argparse.Namespace) -> None:
     t0 = time.time()
 
     prompt = _maybe_enhance_prompt(args)
+
+    # Version-aware distilled LoRA default: pick the filename that exists in
+    # the checkpoint's model dir (2.5 → lora-450, 2.3 → lora-384) unless the
+    # user passed an explicit --distilled-lora.
+    if args.distilled_lora is None:
+        args.distilled_lora = _default_distilled_lora(args.model)
 
     lora_paths = [(path, float(strength)) for path, strength in args.lora] if args.lora else []
 
@@ -729,10 +797,20 @@ def _cmd_a2v(args: argparse.Namespace) -> None:
     """Generate video from audio + text prompt."""
     t0 = time.time()
 
-    from ltx_pipelines_mlx.a2vid_two_stage import A2VidPipelineTwoStage as PipeClass
+    if args.one_stage:
+        from ltx_pipelines_mlx.a2vid_one_stage import A2VidPipelineOneStage as PipeClass
+        pipe_kwargs: dict = {}
+    else:
+        from ltx_pipelines_mlx.a2vid_two_stage import A2VidPipelineTwoStage as PipeClass
+        # Version-aware distilled LoRA default (2.5 → lora-450, 2.3 → lora-384).
+        pipe_kwargs = {
+            "distilled_lora": args.distilled_lora or _default_distilled_lora(args.model),
+            "distilled_lora_strength": args.distilled_lora_strength,
+        }
 
     if not args.quiet:
-        print("Mode: Audio-to-Video (Euler + CFG)")
+        mode_label = "one-stage experimental" if args.one_stage else "two-stage"
+        print(f"Mode: Audio-to-Video ({mode_label}, Euler + CFG)")
         print(f"Audio: {args.audio}")
         print(f"  Model: {args.model}")
 
@@ -740,6 +818,7 @@ def _cmd_a2v(args: argparse.Namespace) -> None:
         model_dir=args.model,
         gemma_model_id=args.gemma,
         low_ram_streaming=getattr(args, "low_ram", False),
+        **pipe_kwargs,
     )
     pipe.verbose = not args.quiet
     kwargs: dict = dict(
@@ -754,10 +833,14 @@ def _cmd_a2v(args: argparse.Namespace) -> None:
         images=args.images,
         audio_start_time=args.audio_start,
     )
-    if args.stage1_steps is not None:
-        kwargs["stage1_steps"] = args.stage1_steps
-    if args.stage2_steps is not None:
-        kwargs["stage2_steps"] = args.stage2_steps
+    if args.one_stage:
+        if args.steps is not None:
+            kwargs["num_steps"] = args.steps
+    else:
+        if args.stage1_steps is not None:
+            kwargs["stage1_steps"] = args.stage1_steps
+        if args.stage2_steps is not None:
+            kwargs["stage2_steps"] = args.stage2_steps
     if args.cfg_scale is not None:
         kwargs["cfg_scale"] = args.cfg_scale
     if args.stg_scale is not None:
@@ -778,6 +861,7 @@ def _cmd_retake(args: argparse.Namespace) -> None:
 
     from ltx_pipelines_mlx.retake import RetakePipeline
 
+    frame_rate = _source_video_frame_rate(args.video)
     if not args.quiet:
         print("Mode: Retake")
         print(f"Video: {args.video}, frames {args.start}-{args.end}")
@@ -800,7 +884,7 @@ def _cmd_retake(args: argparse.Namespace) -> None:
         kwargs["stg_scale"] = args.stg_scale
     video_latent, audio_latent = pipe.retake_from_video(**kwargs)
 
-    _decode_and_save(pipe, video_latent, audio_latent, args)
+    _decode_and_save(pipe, video_latent, audio_latent, args, frame_rate=frame_rate)
     _print_result(args.output, t0, args.quiet)
 
 
@@ -815,6 +899,7 @@ def _cmd_extend(args: argparse.Namespace) -> None:
 
     from ltx_pipelines_mlx.retake import RetakePipeline
 
+    frame_rate = _source_video_frame_rate(args.video)
     if not args.quiet:
         print(f"Mode: Extend ({args.direction})")
         print(f"Video: {args.video}, +{args.extend_frames} latent frames")
@@ -836,7 +921,7 @@ def _cmd_extend(args: argparse.Namespace) -> None:
         kwargs["stg_scale"] = args.stg_scale
     video_latent, audio_latent = pipe.extend_from_video(**kwargs)
 
-    _decode_and_save(pipe, video_latent, audio_latent, args)
+    _decode_and_save(pipe, video_latent, audio_latent, args, frame_rate=frame_rate)
     _print_result(args.output, t0, args.quiet)
 
 
@@ -856,6 +941,10 @@ def _cmd_keyframe(args: argparse.Namespace) -> None:
         print(f"Start: {args.start}, End: {args.end}")
 
     last_pixel_frame = args.frames - 1
+
+    # Version-aware distilled LoRA default (2.5 → lora-450, 2.3 → lora-384).
+    if args.distilled_lora is None:
+        args.distilled_lora = _default_distilled_lora(args.model)
 
     pipe = KeyframeInterpolationPipeline(
         model_dir=args.model,
@@ -979,6 +1068,14 @@ def _cmd_lipdub(args: argparse.Namespace) -> None:
         low_ram_streaming=getattr(args, "low_ram", False),
     )
     pipe.verbose = not args.quiet
+    # Build image anchors from CLI args
+    images = None
+    if getattr(args, "image", None):
+        image_list = args.image or []
+        frame_list = getattr(args, "image_frame", []) or [0] * len(image_list)
+        strength_list = getattr(args, "image_strength", []) or [1.0] * len(image_list)
+        images = [(str(img), int(frame), float(strength)) for img, frame, strength in zip(image_list, frame_list, strength_list)]
+
     pipe.generate_and_save(
         prompt=args.prompt,
         output_path=args.output,
@@ -989,6 +1086,7 @@ def _cmd_lipdub(args: argparse.Namespace) -> None:
         seed=args.seed,
         stage1_steps=args.stage1_steps,
         stage2_steps=args.stage2_steps,
+        images=images,
     )
     _print_result(args.output, t0, args.quiet)
 
@@ -1047,6 +1145,8 @@ def _decode_and_save(
     video_latent: object,
     audio_latent: object,
     args: argparse.Namespace,
+    *,
+    frame_rate: float,
 ) -> None:
     """Decode latents and save to file."""
     from ltx_core_mlx.utils.memory import aggressive_cleanup
@@ -1061,7 +1161,14 @@ def _decode_and_save(
 
     # Load decoders on-demand and decode+save
     pipe._load_decoders()
-    pipe._decode_and_save_video(video_latent, audio_latent, args.output)
+    pipe._decode_and_save_video(video_latent, audio_latent, args.output, frame_rate=frame_rate)
+
+
+def _source_video_frame_rate(video_path: str) -> float:
+    """Return the source video FPS for workflows whose timing follows an input clip."""
+    from ltx_core_mlx.utils.ffmpeg import probe_video_info
+
+    return float(probe_video_info(video_path).fps)
 
 
 def _maybe_enhance_prompt(args: argparse.Namespace) -> str:
@@ -1077,7 +1184,7 @@ def _maybe_enhance_prompt(args: argparse.Namespace) -> str:
         print("Enhancing prompt...")
     gemma = GemmaLanguageModel()
     gemma.load(args.gemma)
-    if getattr(args, "image", None):
+    if getattr(args, "images", None):
         prompt = gemma.enhance_i2v(prompt, seed=args.seed)
     else:
         prompt = gemma.enhance_t2v(prompt, seed=args.seed)

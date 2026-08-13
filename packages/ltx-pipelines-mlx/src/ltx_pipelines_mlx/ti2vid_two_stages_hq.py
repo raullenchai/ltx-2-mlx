@@ -154,6 +154,7 @@ class TI2VidTwoStagesHQPipeline(TI2VidTwoStagesPipeline):
                 spatial_dims=(F, H_half, W_half),
                 video_encoder=self.vae_encoder,
                 frame_rate=frame_rate,
+                model_dir=self.model_dir,
             )
 
         # Stage 1 video/audio: legacy_scalar_blend=True for bit-exact match
@@ -261,6 +262,7 @@ class TI2VidTwoStagesHQPipeline(TI2VidTwoStagesPipeline):
                 spatial_dims=(F, H_full, W_full),
                 video_encoder=self.vae_encoder,
                 frame_rate=frame_rate,
+                model_dir=self.model_dir,
             )
 
         if self.low_memory:

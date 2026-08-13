@@ -211,6 +211,7 @@ class A2VidPipelineTwoStage(TI2VidTwoStagesPipeline):
                     spatial_dims=(F, H_half, W_half),
                     video_encoder=encoder,
                     frame_rate=frame_rate,
+                    model_dir=self.model_dir,
                 )
                 mx.synchronize()
                 return conds
@@ -291,6 +292,7 @@ class A2VidPipelineTwoStage(TI2VidTwoStagesPipeline):
                     spatial_dims=(F, H_full, W_full),
                     video_encoder=encoder,
                     frame_rate=frame_rate,
+                    model_dir=self.model_dir,
                 )
             return v_up_renorm, conds
 

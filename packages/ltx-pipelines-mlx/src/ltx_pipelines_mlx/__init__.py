@@ -12,6 +12,7 @@ Public pipeline classes mirror upstream Lightricks/LTX-2 pipelines 1:1:
 | ``HDRICLoraPipeline`` | ``hdr_ic_lora.HDRICLoraPipeline`` |
 | ``LipDubPipeline`` | ``lipdub.LipDubPipeline`` |
 | ``KeyframeInterpolationPipeline`` | ``keyframe_interpolation.KeyframeInterpolationPipeline`` |
+| ``A2VidPipelineOneStage`` | local experimental A2V draft pipeline |
 | ``A2VidPipelineTwoStage`` | ``a2vid_two_stage.A2VidPipelineTwoStage`` |
 | ``RetakePipeline`` | ``retake.RetakePipeline`` (extend folded in) |
 
@@ -23,6 +24,7 @@ supported on every public pipeline by passing ``image=...`` to
 """
 
 from ltx_pipelines_mlx._base import BasePipeline
+from ltx_pipelines_mlx.a2vid_one_stage import A2VidPipelineOneStage
 from ltx_pipelines_mlx.a2vid_two_stage import A2VidPipelineTwoStage
 from ltx_pipelines_mlx.distilled import DistilledPipeline
 from ltx_pipelines_mlx.hdr_ic_lora import HDRICLoraPipeline
@@ -43,6 +45,7 @@ from ltx_pipelines_mlx.utils.blocks import (
 )
 
 __all__ = [
+    "A2VidPipelineOneStage",
     "A2VidPipelineTwoStage",
     # Composition blocks (mirror upstream utils/blocks.py)
     "AudioConditioner",

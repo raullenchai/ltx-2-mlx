@@ -75,6 +75,16 @@ class PromptEncoder:
     Mirrors upstream ``utils.blocks.PromptEncoder``. Loads Gemma + the
     feature-extractor connector lazily on first call, encodes the prompt
     into ``(video_embeds, audio_embeds)``, then frees both modules.
+
+    Text encoder resolution (LTX-2.3 vs LTX-2.5):
+
+    - LTX-2.5 model dirs ship a converted gemma4 text encoder under
+      ``<model_dir>/text_encoder/`` (``config.json`` with ``model_type:
+      "gemma4"``, see ``scripts/convert_ltx25_to_mlx.py``). When that
+      directory exists it is used with :class:`Gemma4LanguageModel`,
+      ignoring ``gemma_model_id``.
+    - LTX-2.3 model dirs keep using the remote ``gemma_model_id``
+      (default ``mlx-community/gemma-3-12b-it-4bit``).
     """
 
     def __init__(
@@ -87,11 +97,34 @@ class PromptEncoder:
         self._text_encoder: GemmaLanguageModel | None = None
         self._feature_extractor: GemmaFeaturesExtractorV2 | None = None
 
+    def _text_encoder_source(self) -> tuple[str, type]:
+        """Resolve ``(path_or_id, encoder_class)`` for this model dir.
+
+        A local ``text_encoder/`` subdir (LTX-2.5 converted gemma4) wins;
+        otherwise fall back to ``gemma_model_id`` (LTX-2.3 gemma3 path).
+        """
+        import json
+
+        from ltx_core_mlx.text_encoders.gemma.encoders.base_encoder import (
+            Gemma4LanguageModel,
+        )
+
+        local_te = self.model_dir / "text_encoder"
+        if (local_te / "config.json").exists():
+            try:
+                config = json.loads((local_te / "config.json").read_text())
+            except (json.JSONDecodeError, OSError):
+                config = {}
+            if config.get("model_type") == "gemma4":
+                return str(local_te), Gemma4LanguageModel
+        return self.gemma_model_id, GemmaLanguageModel
+
     def load(self) -> None:
         """Load Gemma + connector if not already loaded."""
         if self._text_encoder is None:
-            self._text_encoder = GemmaLanguageModel()
-            self._text_encoder.load(self.gemma_model_id)
+            path, encoder_class = self._text_encoder_source()
+            self._text_encoder = encoder_class()
+            self._text_encoder.load(path)
             aggressive_cleanup()
 
         if self._feature_extractor is None:
