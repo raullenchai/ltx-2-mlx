@@ -119,9 +119,13 @@ class Attention(nn.Module):
 
             if rope_freqs_k is not None:
                 cos_fk, sin_fk, _ = rope_freqs_k
-            else:
-                cos_fk, sin_fk = cos_f, sin_f
-            k = _apply(k, cos_fk, sin_fk)
+                k = _apply(k, cos_fk, sin_fk)
+            elif k.shape[2] == cos_f.shape[2]:
+                # Self-attention can reuse the query frequencies.  For
+                # cross-attention, however, the key sequence may have a
+                # different length; without separate key positions there is
+                # no valid frequency tensor to apply to it.
+                k = _apply(k, cos_f, sin_f)
 
         # Scaled dot-product attention (fused Flash Attention kernel)
         out = mx.fast.scaled_dot_product_attention(q, k, v, scale=self.scale, mask=attention_mask)
