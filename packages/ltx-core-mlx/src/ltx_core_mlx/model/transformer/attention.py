@@ -14,6 +14,7 @@ from __future__ import annotations
 import mlx.core as mx
 import mlx.nn as nn
 
+from ltx_core_mlx.model.transformer.linear import linear
 from ltx_core_mlx.model.transformer.rope import apply_rope_interleaved, apply_rope_split
 
 
@@ -98,9 +99,9 @@ class Attention(nn.Module):
         B, N, _ = x.shape
         kv_input = encoder_hidden_states if encoder_hidden_states is not None else x
 
-        q = self.to_q(x)
-        k = self.to_k(kv_input)
-        v = self.to_v(kv_input)
+        q = linear(self.to_q, x)
+        k = linear(self.to_k, kv_input)
+        v = linear(self.to_v, kv_input)
 
         # QK normalization (over full inner_dim before reshaping)
         q = self.q_norm(q)
@@ -138,10 +139,10 @@ class Attention(nn.Module):
 
         # Per-head gating: gate = 2 * sigmoid(logits)
         if self.to_gate_logits is not None:
-            gate_logits = self.to_gate_logits(x)  # (B, N, num_heads)
+            gate_logits = linear(self.to_gate_logits, x)  # (B, N, num_heads)
             gate = 2.0 * mx.sigmoid(gate_logits)
             out = out * gate.transpose(0, 2, 1)[:, :, :, None]  # (B, heads, N, 1)
 
         # Reshape back: (B, num_heads, N, head_dim) -> (B, N, inner_dim)
         out = out.transpose(0, 2, 1, 3).reshape(B, -1, self.num_heads * self.head_dim)
-        return self.to_out(out)
+        return linear(self.to_out, out)

@@ -12,6 +12,8 @@ from __future__ import annotations
 import mlx.core as mx
 import mlx.nn as nn
 
+from ltx_core_mlx.model.transformer.linear import linear
+
 
 class FeedForward(nn.Module):
     """Feed-forward network with GELU (tanh approx) activation.
@@ -29,4 +31,4 @@ class FeedForward(nn.Module):
         self.proj_out = nn.Linear(inner_dim, dim_out)
 
     def __call__(self, x: mx.array) -> mx.array:
-        return self.proj_out(nn.gelu_approx(self.proj_in(x)))
+        return linear(self.proj_out, nn.gelu_approx(linear(self.proj_in, x)))
