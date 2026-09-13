@@ -41,6 +41,7 @@ by tier, see [PIPELINE_MATURITY.md](PIPELINE_MATURITY.md).
 | `--teacache-thresh F` | 0.5 (Euler) / 1.0 (HQ) | Skip aggressiveness. Higher = more skip = faster but quality risk. | with `--enable-teacache` |
 | `LTX2_GEMMA_EVAL_EVERY=N` | 1 (per-layer eval) | Per-layer `mx.eval` cadence in Gemma forward. Keeps each Metal command buffer below the macOS GPU watchdog (~10 s) deadline. Default `1` on all Apple Silicon since PR #3 (M2 Max 64 GB also crashes without it at production resolutions). Set to `0` on Mac Studio / M-series Ultra owners who never see the watchdog crash to recover lazy-graph throughput. | all pipelines (text encoding shared) |
 | `LTX2_DIT_EVAL_EVERY=N` | 8 | Flush the DiT block loop every N blocks (splits 48 blocks into 6 command buffers, ~1-2 s each). Same trade-off as `LTX2_GEMMA_EVAL_EVERY`. Set to `0` to disable. | all pipelines (DiT forward shared) |
+| `LTX2_DEQUANT_MATMUL_MIN_TOKENS=N` | disabled | Experimental inference-only quantized-linear dispatch. Large inputs explicitly dequantize weights and use BF16 matmul; the crossover depends on hardware and MLX. `1024` was about 4% faster end to end for 768x512 LTX-2.5 q8 on a 48 GB M4 Pro with MLX 0.32, with no MLX allocator increase. Benchmark before enabling elsewhere. | all pipelines (quantized DiT only) |
 | `LTX2_GEMMA_MAX_LENGTH=N` | 1024 | Cap Gemma padded seq_len (last-resort escape hatch). Quality risk: shifts left-padded RoPE positions. | all pipelines |
 
 ## Pipeline-specific options
