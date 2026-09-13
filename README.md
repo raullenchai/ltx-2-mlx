@@ -273,6 +273,7 @@ ltx-2-mlx info       Model info and memory estimate
 
 - `LTX2_GEMMA_EVAL_EVERY=N` — per-layer `mx.eval` cadence in the Gemma forward (default: `1`, i.e. eval every layer). Keeps each Metal command buffer below the macOS GPU watchdog (~10 s) deadline. Set to `0` on Mac Studio / M-series Ultra owners who never see the watchdog crash to recover full lazy-graph throughput.
 - `LTX2_DIT_EVAL_EVERY=N` — flush the DiT block loop every N blocks (default: `8`, splits 48 blocks into 6 command buffers). Same trade-off as above; set to `0` on machines that don't crash to maximise throughput.
+- `LTX2_DEQUANT_MATMUL_MIN_TOKENS=N` — experimental inference-only dispatch for quantized transformer linears. At or above `N` flattened tokens, explicitly dequantizes the weight and uses BF16 matmul instead of `quantized_matmul`; disabled by default because the crossover depends on the Apple GPU and MLX version. On a 48 GB M4 Pro with MLX 0.32, `N=1024` improved 768x512 LTX-2.5 q8 end-to-end latency by about 4% without increasing the MLX allocator peak. Benchmark other hardware before enabling it.
 - `LTX2_GEMMA_MAX_LENGTH=N` — cap Gemma padded sequence length (default: `1024`). Last-resort knob; quality risk on lower values because left-padded RoPE positions drift outside the LTX training distribution.
 - `LTX2_GEMMA_MAX_LENGTH=N` — cap padded Gemma sequence length (default 1024). Reducing to 512/256 speeds Gemma forward proportionally but **shifts left-padded RoPE positions** away from the LTX training distribution (quality risk). Last-resort knob.
 
