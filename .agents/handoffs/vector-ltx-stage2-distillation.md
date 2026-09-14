@@ -98,3 +98,13 @@ trajectory, and encode settings. Record human feedback before revealing the
 mapping. If long-form detail or exposure still trails, add a long-temporal,
 lower-spatial bucket whose total token count remains trainable; do not add
 chip-model or installed-memory branches to product inference.
+
+The human review subsequently passed: the reviewer reported that they could
+not distinguish which side was better after the resume-fixed adjustment. The
+reveal was A/left = mixed-replay step-24 student and B/right = three-evaluation
+teacher. This reverses the prior result on the same prompt, where the teacher
+was judged slightly brighter and more detailed. Treat it as a one-sample long
+form perceptual pass, not a global default-on gate. Stage 2 remains measured at
+about 206.7 seconds versus 301.5 seconds (31.4% lower latency, 1.46x); the
+projected end-to-end gain remains about 1.20-1.25x because other stages are
+unchanged.
