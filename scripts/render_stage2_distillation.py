@@ -88,8 +88,12 @@ def main() -> int:
         )
         video_patchifier = VideoLatentPatchifier()
         audio_patchifier = AudioPatchifier()
-        teacher_video, _ = video_patchifier.patchify(sample["video_teacher_terminal"]["latents"])
-        teacher_audio, _ = audio_patchifier.patchify(sample["audio_teacher_terminal"]["latents"])
+        teacher_video, _ = video_patchifier.patchify(
+            mx.expand_dims(sample["video_teacher_terminal"]["latents"], axis=0)
+        )
+        teacher_audio, _ = audio_patchifier.patchify(
+            mx.expand_dims(sample["audio_teacher_terminal"]["latents"], axis=0)
+        )
         mx.eval(student_video, student_audio, teacher_video, teacher_audio)
         del base_model
         aggressive_cleanup()
