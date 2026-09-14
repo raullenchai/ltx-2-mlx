@@ -4,7 +4,8 @@ import mlx.core as mx
 import mlx.nn as nn
 import pytest
 
-from ltx_pipelines_mlx.utils.samplers import ancestral_euler_step, ancestral_step_noise
+from ltx_pipelines_mlx.scheduler import DISTILLED_SIGMAS
+from ltx_pipelines_mlx.utils.samplers import ancestral_euler_step, ancestral_span_noise, ancestral_step_noise
 from ltx_trainer_mlx.datasets import PrecomputedDataset
 from ltx_trainer_mlx.distillation import (
     ancestral_velocity_target,
@@ -96,6 +97,39 @@ def test_ancestral_step_noise_is_stable_by_original_step() -> None:
     assert mx.array_equal(first[0], second[0]).item()
     assert mx.array_equal(first[1], second[1]).item()
     assert not mx.array_equal(first[0], other[0]).item()
+
+
+def test_ancestral_span_noise_preserves_fine_step_stochastic_forcing() -> None:
+    seed = 10042
+    shape = (1, 3, 2)
+    fine = mx.zeros(shape)
+    deterministic = mx.zeros(shape)
+    for index in range(3):
+        noise, _ = ancestral_step_noise(seed, 8, index, shape, shape)
+        sigma, sigma_next = DISTILLED_SIGMAS[index : index + 2]
+        fine = ancestral_euler_step(fine, mx.zeros_like(fine), sigma, sigma_next, noise)
+        deterministic = ancestral_euler_step(
+            deterministic, mx.zeros_like(deterministic), sigma, sigma_next, mx.zeros_like(noise)
+        )
+
+    span, _ = ancestral_span_noise(seed, 8, 0, 3, DISTILLED_SIGMAS, shape, shape)
+    coarse = ancestral_euler_step(
+        mx.zeros(shape), mx.zeros(shape), DISTILLED_SIGMAS[0], DISTILLED_SIGMAS[3], span
+    )
+    coarse_deterministic = ancestral_euler_step(
+        mx.zeros(shape),
+        mx.zeros(shape),
+        DISTILLED_SIGMAS[0],
+        DISTILLED_SIGMAS[3],
+        mx.zeros(shape),
+    )
+
+    assert mx.allclose(fine - deterministic, coarse - coarse_deterministic, atol=1e-6).item()
+
+
+def test_ancestral_span_noise_rejects_terminal_span() -> None:
+    with pytest.raises(ValueError, match="terminal spans"):
+        ancestral_span_noise(42, 8, 7, 8, DISTILLED_SIGMAS, (1, 2, 2), (1, 2, 2))
 
 
 @pytest.mark.parametrize("sigma", [0.0, -0.1])
@@ -366,6 +400,55 @@ def test_stage1_noise_coupled_strategy_reconstructs_captured_target(tmp_path) ->
     assert mx.allclose(reconstructed_video, video_target.astype(mx.bfloat16), atol=1e-4).item()
     assert mx.allclose(reconstructed_audio, audio_target.astype(mx.bfloat16), atol=1e-4).item()
     assert strategy.get_checkpoint_metadata()["stage1_sampler"] == "ancestral"
+
+
+def test_stage1_span_noise_strategy_reconstructs_captured_target(tmp_path) -> None:
+    video_start = mx.arange(8 * 128).reshape(1, 8, 128).astype(mx.float32) / 100
+    video_target = video_start * 0.8
+    audio_start = mx.arange(3 * 128).reshape(1, 3, 128).astype(mx.float32) / 100
+    audio_target = audio_start * 0.7
+    common = dict(
+        output_root=tmp_path,
+        index=0,
+        video_text_embeds=mx.zeros((1, 4, 4096)),
+        audio_text_embeds=mx.zeros((1, 4, 2048)),
+        spatial_dims=(2, 2, 2),
+        frame_rate=24.0,
+        noise_seed=10042,
+        seed=42,
+        prompt="test",
+    )
+    save_stage1_trajectory_step(step_index=0, sigma=1.0, video=video_start, audio=audio_start, **common)
+    save_stage1_trajectory_step(step_index=3, sigma=0.98125, video=video_target, audio=audio_target, **common)
+    strategy = Stage1TransitionDistillStrategy(
+        Stage1TransitionDistillConfig(
+            sigma=1.0,
+            target_sigma=0.98125,
+            video_start_latents_dir="stage1_video_step_00",
+            video_terminal_latents_dir="stage1_video_step_03",
+            audio_start_latents_dir="stage1_audio_step_00",
+            audio_terminal_latents_dir="stage1_audio_step_03",
+            ancestral_noise_step_index=0,
+            ancestral_noise_step_end_index=3,
+            ancestral_noise_reference_sigmas=DISTILLED_SIGMAS,
+        )
+    )
+    dataset = PrecomputedDataset(str(tmp_path), data_sources=strategy.get_data_sources())
+    batch = {
+        key: ({name: mx.expand_dims(value, 0) for name, value in item.items()} if isinstance(item, dict) else item)
+        for key, item in dataset[0].items()
+    }
+
+    inputs = strategy.prepare_training_inputs(batch, sigma_sampler=None)
+    assert inputs.audio is not None and inputs.audio_targets is not None
+    reconstructed_video, reconstructed_audio = strategy.advance_transition(
+        inputs.video_targets, inputs.audio_targets, inputs, batch
+    )
+    assert mx.allclose(reconstructed_video, video_target.astype(mx.bfloat16), atol=1e-4).item()
+    assert mx.allclose(reconstructed_audio, audio_target.astype(mx.bfloat16), atol=1e-4).item()
+    metadata = strategy.get_checkpoint_metadata()
+    assert metadata["stage1_sampler"] == "ancestral_span_v2"
+    assert metadata["stage1_noise_step_end_index"] == 3
 
 
 def test_stage1_noise_coupling_rejects_terminal_transition() -> None:

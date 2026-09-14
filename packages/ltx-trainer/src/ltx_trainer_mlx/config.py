@@ -468,9 +468,12 @@ class TrainingStrategyConfig(ConfigBaseModel):
     audio_terminal_latents_dir: str = "stage2_audio_terminal_latents"
     conditions_dir: str = "conditions"
     ancestral_noise_step_index: int | None = Field(default=None, ge=0)
+    ancestral_noise_step_end_index: int | None = Field(default=None, gt=0)
+    ancestral_noise_reference_sigmas: list[float] | None = None
     ancestral_noise_total_steps: int = Field(default=8, gt=0)
     ancestral_eta: float = Field(default=1.0, ge=0, le=1)
     ancestral_s_noise: float = Field(default=1.0, ge=0)
+    curriculum_noise_coupling: Literal["lane", "span-v2"] | None = None
     video_loss_weight: float = Field(default=1.0, ge=0)
     audio_loss_weight: float = Field(default=1.0, ge=0)
 
@@ -486,6 +489,18 @@ class TrainingStrategyConfig(ConfigBaseModel):
                 raise ValueError("noise-coupled ancestral transitions must remain above sigma zero")
             if self.ancestral_noise_step_index >= self.ancestral_noise_total_steps:
                 raise ValueError("ancestral noise step must be in the original schedule")
+        if self.name == "stage1_transition_distill" and self.ancestral_noise_step_end_index is not None:
+            if self.ancestral_noise_step_index is None:
+                raise ValueError("ancestral span requires a start step index")
+            if self.ancestral_noise_step_end_index <= self.ancestral_noise_step_index:
+                raise ValueError("ancestral noise span must increase")
+            if self.ancestral_noise_step_end_index > self.ancestral_noise_total_steps:
+                raise ValueError("ancestral noise span exceeds the original schedule")
+            if (
+                self.ancestral_noise_reference_sigmas is None
+                or len(self.ancestral_noise_reference_sigmas) != self.ancestral_noise_total_steps + 1
+            ):
+                raise ValueError("ancestral span requires the complete reference sigma schedule")
         return self
 
 

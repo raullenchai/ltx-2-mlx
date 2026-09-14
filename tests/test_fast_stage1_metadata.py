@@ -39,6 +39,18 @@ def _metadata(**overrides: str) -> dict[str, str]:
     return values
 
 
+def _metadata_v2(**overrides: str) -> dict[str, str]:
+    values = _metadata(
+        fast_stage1_capability="ltx_stage1_compressed_span_v2",
+        fast_stage1_noise_step_spans="[[0,3],[3,5],[5,7],[7,8]]",
+        fast_stage1_noise_reference_sigmas="[1.0,0.99375,0.9875,0.98125,0.975,0.909375,0.725,0.421875,0.0]",
+        stage1_sampler="ancestral_compressed_span_v2",
+    )
+    values.pop("fast_stage1_noise_step_indices")
+    values.update(overrides)
+    return values
+
+
 def _checkpoint(tmp_path, metadata=None):
     path = tmp_path / "fast-stage1.safetensors"
     save_file(
@@ -72,6 +84,38 @@ def test_reads_portable_compressed_stage1_contract(tmp_path) -> None:
     assert contract.noise_step_indices == (0, 3, 5, 7)
     assert contract.noise_total_steps == 8
     assert contract.lora_rank == 2
+
+
+def test_reads_span_v2_stage1_contract(tmp_path) -> None:
+    contract = _read(_checkpoint(tmp_path, _metadata_v2()))
+
+    assert contract.noise_step_indices is None
+    assert contract.noise_step_spans == ((0, 3), (3, 5), (5, 7), (7, 8))
+    assert contract.noise_reference_sigmas == (
+        1.0,
+        0.99375,
+        0.9875,
+        0.98125,
+        0.975,
+        0.909375,
+        0.725,
+        0.421875,
+        0.0,
+    )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "match"),
+    [
+        ({"fast_stage1_noise_step_spans": "[[0,3],[4,5],[5,7],[7,8]]"}, "contiguous"),
+        ({"fast_stage1_noise_step_spans": "[[0,3],[3,5],[5,7]]"}, "one span"),
+        ({"fast_stage1_noise_reference_sigmas": "[1,0]"}, "complete schedule"),
+        ({"stage1_sampler": "ancestral_compressed"}, "span_v2 sampler"),
+    ],
+)
+def test_rejects_malformed_span_v2_contract(tmp_path, overrides, match) -> None:
+    with pytest.raises(ValueError, match=match):
+        _read(_checkpoint(tmp_path, _metadata_v2(**overrides)))
 
 
 @pytest.mark.parametrize(

@@ -12,6 +12,8 @@ from pathlib import Path
 import yaml
 from safetensors import safe_open
 
+from ltx_pipelines_mlx.scheduler import DISTILLED_SIGMAS
+
 
 @dataclass(frozen=True)
 class Phase:
@@ -56,7 +58,7 @@ REPLAY_PHASES = tuple(
 PHASES = PRIMARY_PHASES + REPLAY_PHASES
 
 
-def validate_phase_checkpoint(path: Path, phase: Phase) -> None:
+def validate_phase_checkpoint(path: Path, phase: Phase, noise_coupling: str = "lane") -> None:
     """Reject a stale checkpoint whose metadata does not match its phase."""
     with safe_open(path, framework="numpy") as checkpoint:
         metadata = checkpoint.metadata() or {}
@@ -72,17 +74,26 @@ def validate_phase_checkpoint(path: Path, phase: Phase) -> None:
     for key, value in expected.items():
         if metadata.get(key) != value:
             raise ValueError(f"checkpoint {path} does not match {phase.name}: {key}")
+    if noise_coupling == "span-v2" and metadata.get("stage1_curriculum_noise_coupling") != "span-v2":
+        raise ValueError(f"checkpoint {path} does not declare the span-v2 curriculum")
     if int(metadata.get("lora_rank", "0")) <= 0 or float(metadata.get("lora_alpha", "0")) <= 0:
         raise ValueError(f"checkpoint {path} does not declare a valid LoRA scale")
     if phase.noise_step_index is None:
-        if "stage1_noise_step_index" in metadata or metadata.get("stage1_sampler") == "ancestral":
+        if "stage1_noise_step_index" in metadata or metadata.get("stage1_sampler", "").startswith("ancestral"):
             raise ValueError(f"checkpoint {path} incorrectly declares terminal ancestral noise")
-    elif (
-        metadata.get("stage1_sampler") != "ancestral"
-        or int(metadata.get("stage1_noise_step_index", "-1")) != phase.noise_step_index
-        or int(metadata.get("stage1_noise_total_steps", "0")) != 8
-    ):
-        raise ValueError(f"checkpoint {path} does not match {phase.name}: ancestral noise lane")
+    else:
+        expected_sampler = "ancestral_span_v2" if noise_coupling == "span-v2" else "ancestral"
+        if (
+            metadata.get("stage1_sampler") != expected_sampler
+            or int(metadata.get("stage1_noise_step_index", "-1")) != phase.noise_step_index
+            or int(metadata.get("stage1_noise_total_steps", "0")) != 8
+        ):
+            raise ValueError(f"checkpoint {path} does not match {phase.name}: ancestral noise coupling")
+        if noise_coupling == "span-v2" and (
+            int(metadata.get("stage1_noise_step_end_index", "-1")) != phase.target_index
+            or metadata.get("stage1_noise_reference_sigmas") != str(DISTILLED_SIGMAS)
+        ):
+            raise ValueError(f"checkpoint {path} does not match {phase.name}: ancestral noise span")
 
 
 def build_config(
@@ -93,6 +104,7 @@ def build_config(
     data: Path,
     output: Path,
     load_checkpoint: Path | None,
+    noise_coupling: str = "lane",
 ) -> dict:
     model_config: dict[str, object] = {
         "model_path": str(model),
@@ -114,6 +126,8 @@ def build_config(
         "video_loss_weight": 1.0,
         "audio_loss_weight": 1.0,
     }
+    if noise_coupling == "span-v2":
+        strategy["curriculum_noise_coupling"] = "span-v2"
     if phase.noise_step_index is not None:
         strategy.update(
             ancestral_noise_step_index=phase.noise_step_index,
@@ -121,6 +135,11 @@ def build_config(
             ancestral_eta=1.0,
             ancestral_s_noise=1.0,
         )
+        if noise_coupling == "span-v2":
+            strategy.update(
+                ancestral_noise_step_end_index=phase.target_index,
+                ancestral_noise_reference_sigmas=DISTILLED_SIGMAS,
+            )
 
     return {
         "model": model_config,
@@ -163,6 +182,7 @@ def main() -> int:
     parser.add_argument("--data", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--transformer-file", default="transformer-distilled.safetensors")
+    parser.add_argument("--noise-coupling", choices=("lane", "span-v2"), default="lane")
     args = parser.parse_args()
 
     args.output_root.mkdir(parents=True, exist_ok=True)
@@ -172,7 +192,7 @@ def main() -> int:
             output = args.output_root / phase.name
             expected = output / "checkpoints" / f"lora_weights_step_{phase.steps:05d}.safetensors"
             if expected.is_file():
-                validate_phase_checkpoint(expected, phase)
+                validate_phase_checkpoint(expected, phase, args.noise_coupling)
                 checkpoint = expected
                 continue
             output.mkdir(parents=True, exist_ok=True)
@@ -183,6 +203,7 @@ def main() -> int:
                 data=args.data,
                 output=output,
                 load_checkpoint=checkpoint,
+                noise_coupling=args.noise_coupling,
             )
             config_path = output / "training-config.yaml"
             config_path.write_text(yaml.safe_dump(config, sort_keys=False))

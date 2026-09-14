@@ -23,7 +23,9 @@ class FastStage1Contract:
 
     capability: str
     schedule: tuple[float, ...]
-    noise_step_indices: tuple[int, ...]
+    noise_step_indices: tuple[int, ...] | None
+    noise_step_spans: tuple[tuple[int, int], ...] | None
+    noise_reference_sigmas: tuple[float, ...] | None
     noise_total_steps: int
     lora_rank: int
     lora_alpha: float
@@ -135,6 +137,45 @@ def _parse_noise_indices(value: str, *, transitions: int, total_steps: int) -> t
     return indices
 
 
+def _parse_noise_spans(value: str, *, transitions: int, total_steps: int) -> tuple[tuple[int, int], ...]:
+    try:
+        raw = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError("fast_stage1_noise_step_spans must be valid JSON") from exc
+    if not isinstance(raw, list) or len(raw) != transitions:
+        raise ValueError("fast_stage1_noise_step_spans requires one span per transition")
+    if any(
+        not isinstance(span, list)
+        or len(span) != 2
+        or any(isinstance(item, bool) or not isinstance(item, int) for item in span)
+        for span in raw
+    ):
+        raise ValueError("fast_stage1_noise_step_spans must contain integer pairs")
+    spans = tuple((span[0], span[1]) for span in raw)
+    if spans[0][0] != 0 or any(left[1] != right[0] for left, right in zip(spans, spans[1:])):
+        raise ValueError("fast_stage1_noise_step_spans must be contiguous from zero")
+    if any(not 0 <= start < end <= total_steps for start, end in spans) or spans[-1][1] != total_steps:
+        raise ValueError("fast_stage1_noise_step_spans must cover the original schedule")
+    return spans
+
+
+def _parse_reference_sigmas(value: str, *, total_steps: int) -> tuple[float, ...]:
+    try:
+        raw = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError("fast_stage1_noise_reference_sigmas must be valid JSON") from exc
+    if not isinstance(raw, list) or len(raw) != total_steps + 1:
+        raise ValueError("fast_stage1_noise_reference_sigmas must contain the complete schedule")
+    if any(isinstance(item, bool) or not isinstance(item, (int, float)) for item in raw):
+        raise ValueError("fast_stage1_noise_reference_sigmas must contain only numbers")
+    sigmas = tuple(float(item) for item in raw)
+    if not all(math.isfinite(item) for item in sigmas) or not all(
+        left > right for left, right in zip(sigmas, sigmas[1:])
+    ):
+        raise ValueError("fast_stage1_noise_reference_sigmas must decrease strictly")
+    return sigmas
+
+
 def read_fast_stage1_package(
     model_dir: str | Path,
     manifest_name: str = "fast-stage1.json",
@@ -202,7 +243,7 @@ def read_fast_stage1_contract(
     with safe_open(path, framework="numpy") as checkpoint:
         metadata = checkpoint.metadata() or {}
         capability = _required(metadata, "fast_stage1_capability")
-        if capability != "ltx_stage1_compressed_v1":
+        if capability not in ("ltx_stage1_compressed_v1", "ltx_stage1_compressed_span_v2"):
             raise ValueError(f"unsupported fast stage-1 capability {capability!r}")
         schedule = _parse_schedule(_required(metadata, "fast_stage1_schedule"))
         if int(_required(metadata, "stage1_steps")) != len(schedule) - 1:
@@ -210,13 +251,35 @@ def read_fast_stage1_contract(
         noise_total_steps = int(_required(metadata, "fast_stage1_noise_total_steps"))
         if noise_total_steps <= 0:
             raise ValueError("fast_stage1_noise_total_steps must be positive")
-        noise_step_indices = _parse_noise_indices(
-            _required(metadata, "fast_stage1_noise_step_indices"),
-            transitions=len(schedule) - 1,
-            total_steps=noise_total_steps,
-        )
-        if _required(metadata, "stage1_sampler") != "ancestral_compressed":
-            raise ValueError("fast stage-1 requires the ancestral_compressed sampler")
+        noise_step_indices = None
+        noise_step_spans = None
+        noise_reference_sigmas = None
+        if capability == "ltx_stage1_compressed_v1":
+            noise_step_indices = _parse_noise_indices(
+                _required(metadata, "fast_stage1_noise_step_indices"),
+                transitions=len(schedule) - 1,
+                total_steps=noise_total_steps,
+            )
+            if _required(metadata, "stage1_sampler") != "ancestral_compressed":
+                raise ValueError("fast stage-1 v1 requires the ancestral_compressed sampler")
+        else:
+            noise_step_spans = _parse_noise_spans(
+                _required(metadata, "fast_stage1_noise_step_spans"),
+                transitions=len(schedule) - 1,
+                total_steps=noise_total_steps,
+            )
+            noise_reference_sigmas = _parse_reference_sigmas(
+                _required(metadata, "fast_stage1_noise_reference_sigmas"),
+                total_steps=noise_total_steps,
+            )
+            if any(
+                schedule[index] != noise_reference_sigmas[span[0]]
+                or schedule[index + 1] != noise_reference_sigmas[span[1]]
+                for index, span in enumerate(noise_step_spans)
+            ):
+                raise ValueError("fast stage-1 noise spans do not match its coarse schedule")
+            if _required(metadata, "stage1_sampler") != "ancestral_compressed_span_v2":
+                raise ValueError("fast stage-1 v2 requires the ancestral_compressed_span_v2 sampler")
         if float(_required(metadata, "stage1_ancestral_eta")) != 1.0:
             raise ValueError("fast stage-1 requires ancestral eta=1")
         if float(_required(metadata, "stage1_ancestral_s_noise")) != 1.0:
@@ -259,18 +322,20 @@ def read_fast_stage1_contract(
         _validate_lora_shapes(checkpoint, rank)
 
     return FastStage1Contract(
-        capability,
-        schedule,
-        noise_step_indices,
-        noise_total_steps,
-        rank,
-        alpha,
-        declared_model_id,
-        declared_revision,
-        declared_transformer,
-        declared_transformer_sha256,
-        declared_config_sha256,
-        pipeline_family,
-        declared_runtime_major,
-        qualification_revision,
+        capability=capability,
+        schedule=schedule,
+        noise_step_indices=noise_step_indices,
+        noise_step_spans=noise_step_spans,
+        noise_reference_sigmas=noise_reference_sigmas,
+        noise_total_steps=noise_total_steps,
+        lora_rank=rank,
+        lora_alpha=alpha,
+        base_model_id=declared_model_id,
+        base_revision=declared_revision,
+        transformer_file=declared_transformer,
+        transformer_sha256=declared_transformer_sha256,
+        transformer_config_sha256=declared_config_sha256,
+        pipeline_family=pipeline_family,
+        runtime_contract_major=declared_runtime_major,
+        qualification_revision=qualification_revision,
     )

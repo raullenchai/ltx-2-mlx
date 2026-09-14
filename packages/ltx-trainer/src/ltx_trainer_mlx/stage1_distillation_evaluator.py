@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import time
 from pathlib import Path
@@ -33,6 +34,7 @@ def read_stage1_checkpoint_metadata(path: str | Path) -> dict[str, str]:
 
 
 def _strategy(metadata: dict[str, str]) -> Stage1TransitionDistillStrategy:
+    sampler = metadata.get("stage1_sampler")
     return Stage1TransitionDistillStrategy(
         Stage1TransitionDistillConfig(
             sigma=float(metadata["stage1_sigma"]),
@@ -43,7 +45,17 @@ def _strategy(metadata: dict[str, str]) -> Stage1TransitionDistillStrategy:
             audio_terminal_latents_dir=metadata["stage1_audio_target_latents_dir"],
             conditions_dir=metadata.get("stage1_conditions_dir", "stage1_conditions"),
             ancestral_noise_step_index=(
-                int(metadata["stage1_noise_step_index"]) if metadata.get("stage1_sampler") == "ancestral" else None
+                int(metadata["stage1_noise_step_index"])
+                if sampler in ("ancestral", "ancestral_span_v2")
+                else None
+            ),
+            ancestral_noise_step_end_index=(
+                int(metadata["stage1_noise_step_end_index"]) if sampler == "ancestral_span_v2" else None
+            ),
+            ancestral_noise_reference_sigmas=(
+                json.loads(metadata["stage1_noise_reference_sigmas"])
+                if sampler == "ancestral_span_v2"
+                else None
             ),
             ancestral_noise_total_steps=int(metadata.get("stage1_noise_total_steps", "8")),
             ancestral_eta=float(metadata.get("stage1_ancestral_eta", "1.0")),

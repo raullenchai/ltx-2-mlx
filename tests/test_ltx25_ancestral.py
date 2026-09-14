@@ -170,6 +170,8 @@ def _run_loop(
     model=None,
     noise_step_indices=None,
     noise_total_steps=None,
+    noise_step_spans=None,
+    noise_reference_sigmas=None,
 ):
     """Run ancestral_denoise_loop with fake model + tiny states; return (out, model)."""
     video_state = _state((1, 32, 8), seed)
@@ -186,6 +188,8 @@ def _run_loop(
         noise_seed=noise_seed,
         noise_step_indices=noise_step_indices,
         noise_total_steps=noise_total_steps,
+        noise_step_spans=noise_step_spans,
+        noise_reference_sigmas=noise_reference_sigmas,
         eta=eta,
         s_noise=s_noise,
     )
@@ -232,6 +236,30 @@ class TestAncestralDenoiseLoop:
         expected_key = mx.random.split(mx.random.key(noise_seed), 8)[3]
         assert len(selected_keys) == 1
         np.testing.assert_array_equal(selected_keys[0], np.array(expected_key))
+
+    def test_compressed_span_schedule_uses_every_covered_lane(self, monkeypatch):
+        import ltx_pipelines_mlx.utils.samplers as samplers
+
+        observed = []
+        original_helper = samplers.ancestral_span_noise
+
+        def record_span(*args, **kwargs):
+            observed.append((args[2], args[3]))
+            return original_helper(*args, **kwargs)
+
+        monkeypatch.setattr(samplers, "ancestral_span_noise", record_span)
+        _run_loop(
+            42,
+            10042,
+            sigmas=[1.0, 0.98125, 0.0],
+            noise_step_spans=[(0, 3), (3, 8)],
+            noise_reference_sigmas=list(DISTILLED_SIGMAS),
+            noise_total_steps=8,
+        )
+
+        # The terminal transition draws no noise; the first coarse transition
+        # aggregates original lanes 0, 1, and 2.
+        assert observed == [(0, 3)]
 
     @pytest.mark.parametrize(
         ("indices", "total", "message"),
@@ -450,6 +478,8 @@ class TestDistilledPipelineSamplerSelection:
             contract=SimpleNamespace(
                 schedule=(1.0, 0.98125, 0.909375, 0.421875, 0.0),
                 noise_step_indices=(0, 3, 5, 7),
+                noise_step_spans=None,
+                noise_reference_sigmas=None,
                 noise_total_steps=8,
             ),
         )

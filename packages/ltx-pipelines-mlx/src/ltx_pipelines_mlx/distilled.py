@@ -385,11 +385,18 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
 
         sigmas_1 = DISTILLED_SIGMAS[: stage1_steps + 1] if stage1_steps else DISTILLED_SIGMAS
         noise_step_indices = None
+        noise_step_spans = None
+        noise_reference_sigmas = None
         noise_total_steps = None
         if self._fast_stage1_package is not None:
             contract = self._fast_stage1_package.contract
             sigmas_1 = list(contract.schedule)
-            noise_step_indices = list(contract.noise_step_indices)
+            if contract.noise_step_indices is not None:
+                noise_step_indices = list(contract.noise_step_indices)
+            if contract.noise_step_spans is not None:
+                noise_step_spans = list(contract.noise_step_spans)
+            if contract.noise_reference_sigmas is not None:
+                noise_reference_sigmas = list(contract.noise_reference_sigmas)
             noise_total_steps = contract.noise_total_steps
 
         def capture_stage1(sigma: float, video: mx.array, audio: mx.array) -> None:
@@ -432,6 +439,8 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
                 noise_seed=seed + ANCESTRAL_NOISE_SEED_OFFSET,
                 noise_step_indices=noise_step_indices,
                 noise_total_steps=noise_total_steps,
+                noise_step_spans=noise_step_spans,
+                noise_reference_sigmas=noise_reference_sigmas,
                 eta=ANCESTRAL_ETA,
                 s_noise=ANCESTRAL_S_NOISE,
                 step_callback=capture_stage1 if stage1_trajectory_callback is not None else None,

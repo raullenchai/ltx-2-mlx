@@ -13,13 +13,15 @@ from safetensors import safe_open
 from safetensors.numpy import load_file, save_file
 
 from ltx_core_mlx.loader.integrity import transformer_sha256
+from ltx_pipelines_mlx.scheduler import DISTILLED_SIGMAS
 
 _IMMUTABLE_REVISION_RE = re.compile(r"[0-9a-f]{40,64}")
 _SCHEDULE = [1.0, 0.98125, 0.909375, 0.421875, 0.0]
 _NOISE_STEP_INDICES = [0, 3, 5, 7]
+_NOISE_STEP_SPANS = [[0, 3], [3, 5], [5, 7], [7, 8]]
 
 
-def _validate_source_checkpoint(metadata: dict[str, str]) -> None:
+def _validate_source_checkpoint(metadata: dict[str, str], noise_coupling: str = "lane") -> None:
     expected = {
         "distillation": "stage1_transition",
         "stage1_sigma": "0.421875",
@@ -32,8 +34,13 @@ def _validate_source_checkpoint(metadata: dict[str, str]) -> None:
     for key, value in expected.items():
         if metadata.get(key) != value:
             raise ValueError(f"checkpoint is not the final compressed Stage-1 curriculum artifact: {key}")
-    if "stage1_noise_step_index" in metadata or metadata.get("stage1_sampler") == "ancestral":
+    if "stage1_noise_step_index" in metadata or metadata.get("stage1_sampler", "").startswith("ancestral"):
         raise ValueError("final compressed Stage-1 checkpoint must not declare ancestral noise")
+    declared_coupling = metadata.get("stage1_curriculum_noise_coupling")
+    if noise_coupling == "span-v2" and declared_coupling != "span-v2":
+        raise ValueError("span-v2 package requires a checkpoint from the span-v2 curriculum")
+    if noise_coupling == "lane" and declared_coupling == "span-v2":
+        raise ValueError("lane package cannot relabel a span-v2 curriculum checkpoint")
 
 
 def _sha256(path: Path) -> str:
@@ -61,6 +68,7 @@ def main() -> int:
     parser.add_argument("--base-revision", required=True)
     parser.add_argument("--transformer-file", default="transformer-distilled.safetensors")
     parser.add_argument("--qualification-revision", required=True)
+    parser.add_argument("--noise-coupling", choices=("lane", "span-v2"), default="lane")
     args = parser.parse_args()
 
     if not _IMMUTABLE_REVISION_RE.fullmatch(args.base_revision):
@@ -71,18 +79,18 @@ def main() -> int:
 
     with safe_open(args.checkpoint, framework="numpy") as source:
         metadata = source.metadata() or {}
-    _validate_source_checkpoint(metadata)
+    _validate_source_checkpoint(metadata, args.noise_coupling)
     if int(metadata.get("lora_rank", "0")) <= 0 or float(metadata.get("lora_alpha", "0")) <= 0:
         raise ValueError("checkpoint must declare a positive LoRA rank and alpha")
 
     output_metadata = dict(metadata)
+    span_v2 = args.noise_coupling == "span-v2"
     output_metadata.update(
-        fast_stage1_capability="ltx_stage1_compressed_v1",
+        fast_stage1_capability="ltx_stage1_compressed_span_v2" if span_v2 else "ltx_stage1_compressed_v1",
         fast_stage1_schedule=json.dumps(_SCHEDULE, separators=(",", ":")),
-        fast_stage1_noise_step_indices=json.dumps(_NOISE_STEP_INDICES, separators=(",", ":")),
         fast_stage1_noise_total_steps="8",
         stage1_steps="4",
-        stage1_sampler="ancestral_compressed",
+        stage1_sampler="ancestral_compressed_span_v2" if span_v2 else "ancestral_compressed",
         stage1_ancestral_eta="1.0",
         stage1_ancestral_s_noise="1.0",
         base_model_id=args.base_model_id,
@@ -94,6 +102,14 @@ def main() -> int:
         runtime_contract_major="1",
         qualification_revision=args.qualification_revision,
     )
+    if span_v2:
+        output_metadata.update(
+            fast_stage1_noise_step_spans=json.dumps(_NOISE_STEP_SPANS, separators=(",", ":")),
+            fast_stage1_noise_reference_sigmas=json.dumps(DISTILLED_SIGMAS, separators=(",", ":")),
+        )
+        output_metadata.pop("fast_stage1_noise_step_indices", None)
+    else:
+        output_metadata["fast_stage1_noise_step_indices"] = json.dumps(_NOISE_STEP_INDICES, separators=(",", ":"))
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     adapter_path = args.output_dir / "fast-stage1.safetensors"

@@ -88,6 +88,79 @@ def ancestral_step_noise(
     return _ancestral_noise_from_key(step_key, video_shape, audio_shape)
 
 
+def _ancestral_transition_coefficients(
+    sigma: float,
+    sigma_next: float,
+    eta: float,
+) -> tuple[float, float]:
+    """Return the input and noise coefficients of one ancestral Euler step."""
+    if sigma_next == 0:
+        return 0.0, 0.0
+    downstep_ratio = 1.0 + (sigma_next / sigma - 1.0) * eta
+    sigma_down = sigma_next * downstep_ratio
+    alpha_next = 1.0 - sigma_next
+    alpha_down = 1.0 - sigma_down
+    input_coefficient = (alpha_next / alpha_down) * (sigma_down / sigma)
+    noise_coefficient = (
+        max(sigma_next**2 - sigma_down**2 * alpha_next**2 / alpha_down**2, 0.0) ** 0.5
+    )
+    return input_coefficient, noise_coefficient
+
+
+def ancestral_span_noise(
+    noise_seed: int,
+    total_steps: int,
+    start_index: int,
+    end_index: int,
+    reference_sigmas: list[float] | tuple[float, ...],
+    video_shape: tuple[int, ...],
+    audio_shape: tuple[int, ...],
+    *,
+    eta: float = 1.0,
+) -> tuple[mx.array, mx.array]:
+    """Collapse every seeded noise lane in a fine-step span into one coarse lane.
+
+    The returned tensor is scaled so that using it in the ancestral transition
+    from ``reference_sigmas[start_index]`` to ``reference_sigmas[end_index]``
+    preserves the accumulated stochastic forcing of the fine steps when their
+    denoised predictions are held fixed. Model drift between fine steps is
+    nonlinear, so this is a noise coupling primitive rather than a claim that
+    the complete fine trajectory is analytically equivalent.
+    """
+    if total_steps <= 0 or len(reference_sigmas) != total_steps + 1:
+        raise ValueError("reference_sigmas must contain total_steps + 1 values")
+    if not 0 <= start_index < end_index <= total_steps:
+        raise ValueError("noise span must satisfy 0 <= start < end <= total_steps")
+    if reference_sigmas[end_index] == 0:
+        raise ValueError("terminal spans do not inject ancestral noise")
+    if not 0 < eta <= 1:
+        raise ValueError("span noise requires 0 < eta <= 1")
+
+    weights: list[float] = []
+    for index in range(start_index, end_index):
+        input_coefficient, noise_coefficient = _ancestral_transition_coefficients(
+            reference_sigmas[index], reference_sigmas[index + 1], eta
+        )
+        weights = [weight * input_coefficient for weight in weights]
+        weights.append(noise_coefficient)
+
+    _, coarse_noise_coefficient = _ancestral_transition_coefficients(
+        reference_sigmas[start_index], reference_sigmas[end_index], eta
+    )
+    if coarse_noise_coefficient <= 0:
+        raise ValueError("coarse ancestral transition has no noise component")
+    weights = [weight / coarse_noise_coefficient for weight in weights]
+
+    step_keys = mx.random.split(mx.random.key(noise_seed % (1 << 64)), total_steps)
+    video = mx.zeros(video_shape, dtype=mx.float32)
+    audio = mx.zeros(audio_shape, dtype=mx.float32)
+    for weight, index in zip(weights, range(start_index, end_index)):
+        video_lane, audio_lane = _ancestral_noise_from_key(step_keys[index], video_shape, audio_shape)
+        video = video + weight * video_lane
+        audio = audio + weight * audio_lane
+    return video, audio
+
+
 def _ancestral_noise_from_key(
     step_key: mx.array,
     video_shape: tuple[int, ...],
@@ -298,6 +371,8 @@ def ancestral_denoise_loop(
     noise_seed: int = -1,
     noise_step_indices: list[int] | None = None,
     noise_total_steps: int | None = None,
+    noise_step_spans: list[tuple[int, int]] | None = None,
+    noise_reference_sigmas: list[float] | None = None,
     eta: float = 1.0,
     s_noise: float = 1.0,
     step_callback: Callable[[float, mx.array, mx.array], None] | None = None,
@@ -321,6 +396,10 @@ def ancestral_denoise_loop(
       supplying ``noise_step_indices`` together with ``noise_total_steps``.
       For example, boundaries ``[0, 3, 5, 7, 8]`` use noise lanes
       ``[0, 3, 5, 7]`` from the original eight-transition schedule.
+    - ``noise_step_spans`` with ``noise_reference_sigmas`` enables the explicit
+      v2 coupling. Each coarse step combines every original lane it covers,
+      including its accumulated propagation coefficient. The legacy index and
+      span mappings are mutually exclusive.
     - ``eta=0`` disables noise entirely (``draw_noise=False``) — the loop then
       reduces to the deterministic Euler loop, and ``noise_seed`` has no
       effect (matches the reference's ``draw_noise=stepper.eta > 0`` gate).
@@ -348,6 +427,11 @@ def ancestral_denoise_loop(
             and contain exactly one index per transition.
         noise_total_steps: Number of transitions in the original schedule
             whose seeded noise stream should be reproduced.
+        noise_step_spans: Optional ``(start, end)`` fine-step span for each
+            coarse transition. Requires ``noise_reference_sigmas`` and is
+            mutually exclusive with ``noise_step_indices``.
+        noise_reference_sigmas: Complete original sigma schedule used to
+            derive the span propagation coefficients.
         eta: Stochastic noise injection strength (0=deterministic, 1=maximum).
         s_noise: Noise multiplier for the injected term.
         step_callback: Optional research hook called after each completed
@@ -375,8 +459,13 @@ def ancestral_denoise_loop(
     steps = list(zip(sigmas[:-1], sigmas[1:]))
     iterator = tqdm(steps, desc="Denoising (ancestral)", disable=not show_progress)
 
-    if (noise_step_indices is None) != (noise_total_steps is None):
-        raise ValueError("noise_step_indices and noise_total_steps must be provided together")
+    if noise_step_indices is not None and noise_step_spans is not None:
+        raise ValueError("noise_step_indices and noise_step_spans are mutually exclusive")
+    if noise_reference_sigmas is not None and noise_step_spans is None:
+        raise ValueError("noise_reference_sigmas requires noise_step_spans")
+    mapped_noise = noise_step_indices is not None or noise_step_spans is not None
+    if mapped_noise != (noise_total_steps is not None):
+        raise ValueError("mapped noise and noise_total_steps must be provided together")
     if noise_step_indices is not None:
         if noise_total_steps <= 0:
             raise ValueError("noise_total_steps must be positive")
@@ -384,6 +473,18 @@ def ancestral_denoise_loop(
             raise ValueError("noise_step_indices must contain one index per transition")
         if any(not 0 <= index < noise_total_steps for index in noise_step_indices):
             raise ValueError("noise_step_indices entries must be in [0, noise_total_steps)")
+    if noise_step_spans is not None:
+        if noise_total_steps <= 0:
+            raise ValueError("noise_total_steps must be positive")
+        if noise_reference_sigmas is None or len(noise_reference_sigmas) != noise_total_steps + 1:
+            raise ValueError("noise_reference_sigmas must contain noise_total_steps + 1 values")
+        if len(noise_step_spans) != len(steps):
+            raise ValueError("noise_step_spans must contain one span per transition")
+        for index, span in enumerate(noise_step_spans):
+            if len(span) != 2 or not 0 <= span[0] < span[1] <= noise_total_steps:
+                raise ValueError("noise spans must satisfy 0 <= start < end <= noise_total_steps")
+            if sigmas[index] != noise_reference_sigmas[span[0]] or sigmas[index + 1] != noise_reference_sigmas[span[1]]:
+                raise ValueError("noise span boundaries must match the coarse sigma schedule")
 
     # Whether per-token timesteps are needed (conditioning masks present).
     video_uniform = _is_uniform_mask(video_state.denoise_mask)
@@ -393,11 +494,13 @@ def ancestral_denoise_loop(
     # first, audio second. ``noise_seed=-1`` (the reference default) is
     # normalized to a valid MLX key.
     base_key = mx.random.key(noise_seed % (1 << 64))
-    if noise_step_indices is None:
+    if noise_step_indices is None and noise_step_spans is None:
         step_keys = mx.random.split(base_key, len(steps))
-    else:
+    elif noise_step_indices is not None:
         original_step_keys = mx.random.split(base_key, noise_total_steps)
         step_keys = original_step_keys[mx.array(noise_step_indices)]
+    else:
+        step_keys = None
     draw_noise = eta > 0
     for step_idx, (sigma, sigma_next) in enumerate(iterator):
         # Build sigma / per-token timesteps (same call pattern as denoise_loop).
@@ -440,11 +543,24 @@ def ancestral_denoise_loop(
         # Fresh noise per step: bfloat16 (the latent state's dtype) like the
         # reference ``_get_plain_noise``, cast to float32 inside the step.
         if draw_noise:
-            video_noise, audio_noise = _ancestral_noise_from_key(
-                step_keys[step_idx],
-                video_x.shape,
-                audio_x.shape,
-            )
+            if noise_step_spans is None:
+                video_noise, audio_noise = _ancestral_noise_from_key(
+                    step_keys[step_idx],
+                    video_x.shape,
+                    audio_x.shape,
+                )
+            else:
+                start_index, end_index = noise_step_spans[step_idx]
+                video_noise, audio_noise = ancestral_span_noise(
+                    noise_seed,
+                    noise_total_steps,
+                    start_index,
+                    end_index,
+                    noise_reference_sigmas,
+                    video_x.shape,
+                    audio_x.shape,
+                    eta=eta,
+                )
         else:
             video_noise = None
             audio_noise = None

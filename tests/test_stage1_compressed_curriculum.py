@@ -56,6 +56,34 @@ def test_ancestral_phase_config_is_noise_coupled_and_resumes() -> None:
     }
 
 
+def test_span_v2_phase_config_couples_every_fine_noise_lane() -> None:
+    phase = PRIMARY_PHASES[0]
+    config = build_config(
+        phase=phase,
+        model=Path("/models/ltx"),
+        transformer_file="transformer.safetensors",
+        data=Path("/data/stage1"),
+        output=Path("/output/phase"),
+        load_checkpoint=None,
+        noise_coupling="span-v2",
+    )
+
+    strategy = config["training_strategy"]
+    assert strategy["ancestral_noise_step_index"] == 0
+    assert strategy["ancestral_noise_step_end_index"] == 3
+    assert strategy["ancestral_noise_reference_sigmas"] == [
+        1.0,
+        0.99375,
+        0.9875,
+        0.98125,
+        0.975,
+        0.909375,
+        0.725,
+        0.421875,
+        0.0,
+    ]
+
+
 def test_terminal_phase_draws_no_noise_and_replay_is_low_lr() -> None:
     config = build_config(
         phase=PRIMARY_PHASES[-1],

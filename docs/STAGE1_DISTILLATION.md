@@ -35,6 +35,22 @@ known runtime noise from the supervised velocity target, and re-injects it in
 the ancestral evaluator. A noise-coupled transition is forbidden from targeting
 sigma zero.
 
+That first coupling is retained as `lane` v1 for reproducibility, but it only
+carries lane 0 across the teacher span `0 -> 1 -> 2 -> 3`; lanes 1 and 2 remain
+hidden target randomness. The `span-v2` experiment instead propagates and
+combines every seeded lane covered by a coarse transition. Its weights are the
+exact accumulated stochastic coefficients of the fine ancestral Euler steps
+when denoised predictions are held fixed, divided by the coarse step's noise
+coefficient. Training and inference use the identical coupling. This preserves
+the fine path's random forcing without adding model evaluations, but it does
+not make the nonlinear teacher drift analytically equivalent.
+
+This follows the motivation of [stochastic consistency
+distillation](https://arxiv.org/abs/2403.01505): controlled SDE noise can repair
+accumulated approximation error and preserve diversity, while excessive noise
+can destabilize training. It remains experimental until decoded multi-seed
+qualification passes.
+
 Evaluate either checkpoint against prompt-disjoint trajectories:
 
 ```bash
@@ -83,6 +99,17 @@ python scripts/train_stage1_compressed_curriculum.py \
   --output-root /private/tmp/LTX-stage1-compressed
 ```
 
+Run the complete-noise coupling in a separate output root so v1 and v2
+checkpoints cannot be confused:
+
+```bash
+python scripts/train_stage1_compressed_curriculum.py \
+  --model /path/to/ltx-2.5-mlx-q8/snapshot \
+  --data /path/to/training/stage1-trajectories \
+  --output-root /private/tmp/LTX-stage1-compressed-span-v2 \
+  --noise-coupling span-v2
+```
+
 The runner uses a fresh process per phase, requires every handoff checkpoint,
 and follows the primary pass with low-learning-rate replay over all four
 transitions. Sequential replay is only a mitigation for forgetting, not proof
@@ -110,6 +137,12 @@ python scripts/package_fast_stage1.py \
   --base-revision 0123456789abcdef0123456789abcdef01234567 \
   --qualification-revision qual-v1
 ```
+
+For a qualified span-v2 checkpoint, add `--noise-coupling span-v2`. The
+packager requires a durable `span-v2` curriculum marker and writes the full
+fine sigma schedule plus contiguous noise spans into the artifact. The loader
+rejects a relabeled v1 checkpoint, missing or non-contiguous spans, and any
+coarse/fine schedule mismatch.
 
 The opt-in runtime is `--distilled --fast-stage1-manifest fast-stage1.json`.
 It fails closed on a malformed or mismatched package and preserves the

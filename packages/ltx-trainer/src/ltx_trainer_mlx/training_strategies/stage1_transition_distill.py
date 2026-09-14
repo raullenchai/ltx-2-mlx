@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 import mlx.core as mx
 
-from ltx_pipelines_mlx.utils.samplers import ancestral_euler_step, ancestral_step_noise
+from ltx_pipelines_mlx.utils.samplers import ancestral_euler_step, ancestral_span_noise, ancestral_step_noise
 from ltx_trainer_mlx.distillation import ancestral_velocity_target, euler_step, transition_velocity_target
 from ltx_trainer_mlx.training_strategies.base_strategy import (
     DEFAULT_FPS,
@@ -33,9 +33,12 @@ class Stage1TransitionDistillConfig(TrainingStrategyConfigBase):
         audio_terminal_latents_dir: str,
         conditions_dir: str = "stage1_conditions",
         ancestral_noise_step_index: int | None = None,
+        ancestral_noise_step_end_index: int | None = None,
+        ancestral_noise_reference_sigmas: list[float] | None = None,
         ancestral_noise_total_steps: int = 8,
         ancestral_eta: float = 1.0,
         ancestral_s_noise: float = 1.0,
+        curriculum_noise_coupling: str | None = None,
         video_loss_weight: float = 1.0,
         audio_loss_weight: float = 1.0,
     ) -> None:
@@ -49,8 +52,22 @@ class Stage1TransitionDistillConfig(TrainingStrategyConfigBase):
                 raise ValueError("noise-coupled ancestral transitions must remain above sigma zero")
             if ancestral_noise_total_steps <= 0 or not 0 <= ancestral_noise_step_index < ancestral_noise_total_steps:
                 raise ValueError("ancestral noise step must be in the original schedule")
+        if ancestral_noise_step_end_index is not None:
+            if ancestral_noise_step_index is None:
+                raise ValueError("ancestral span requires a start step index")
+            if not ancestral_noise_step_index < ancestral_noise_step_end_index <= ancestral_noise_total_steps:
+                raise ValueError("ancestral noise span must increase within the original schedule")
+            if ancestral_noise_reference_sigmas is None or len(ancestral_noise_reference_sigmas) != ancestral_noise_total_steps + 1:
+                raise ValueError("ancestral span requires the complete reference sigma schedule")
+            if (
+                sigma != ancestral_noise_reference_sigmas[ancestral_noise_step_index]
+                or target_sigma != ancestral_noise_reference_sigmas[ancestral_noise_step_end_index]
+            ):
+                raise ValueError("ancestral noise span boundaries must match the configured transition")
         if not 0 <= ancestral_eta <= 1 or ancestral_s_noise < 0:
             raise ValueError("ancestral eta/noise strength is invalid")
+        if curriculum_noise_coupling not in (None, "lane", "span-v2"):
+            raise ValueError("unsupported stage-1 curriculum noise coupling")
         self.sigma = sigma
         self.target_sigma = target_sigma
         self.video_start_latents_dir = video_start_latents_dir
@@ -59,9 +76,12 @@ class Stage1TransitionDistillConfig(TrainingStrategyConfigBase):
         self.audio_terminal_latents_dir = audio_terminal_latents_dir
         self.conditions_dir = conditions_dir
         self.ancestral_noise_step_index = ancestral_noise_step_index
+        self.ancestral_noise_step_end_index = ancestral_noise_step_end_index
+        self.ancestral_noise_reference_sigmas = ancestral_noise_reference_sigmas
         self.ancestral_noise_total_steps = ancestral_noise_total_steps
         self.ancestral_eta = ancestral_eta
         self.ancestral_s_noise = ancestral_s_noise
+        self.curriculum_noise_coupling = curriculum_noise_coupling
         self.video_loss_weight = video_loss_weight
         self.audio_loss_weight = audio_loss_weight
 
@@ -174,13 +194,25 @@ class Stage1TransitionDistillStrategy(TrainingStrategy):
             raise ValueError("noise-coupled stage-1 training requires one noise_seed per sample")
         video_noises, audio_noises = [], []
         for seed in seeds.reshape(-1):
-            video_noise, audio_noise = ancestral_step_noise(
-                int(seed.item()),
-                self.config.ancestral_noise_total_steps,
-                step_index,
-                (1, *video_shape[1:]),
-                (1, *audio_shape[1:]),
-            )
+            if self.config.ancestral_noise_step_end_index is None:
+                video_noise, audio_noise = ancestral_step_noise(
+                    int(seed.item()),
+                    self.config.ancestral_noise_total_steps,
+                    step_index,
+                    (1, *video_shape[1:]),
+                    (1, *audio_shape[1:]),
+                )
+            else:
+                video_noise, audio_noise = ancestral_span_noise(
+                    int(seed.item()),
+                    self.config.ancestral_noise_total_steps,
+                    step_index,
+                    self.config.ancestral_noise_step_end_index,
+                    self.config.ancestral_noise_reference_sigmas,
+                    (1, *video_shape[1:]),
+                    (1, *audio_shape[1:]),
+                    eta=self.config.ancestral_eta,
+                )
             video_noises.append(video_noise)
             audio_noises.append(audio_noise)
         return mx.concatenate(video_noises), mx.concatenate(audio_noises)
@@ -239,12 +271,20 @@ class Stage1TransitionDistillStrategy(TrainingStrategy):
             "stage1_audio_target_latents_dir": self.config.audio_terminal_latents_dir,
             "stage1_conditions_dir": self.config.conditions_dir,
         }
+        if self.config.curriculum_noise_coupling is not None:
+            metadata["stage1_curriculum_noise_coupling"] = self.config.curriculum_noise_coupling
         if self.config.ancestral_noise_step_index is not None:
+            span_v2 = self.config.ancestral_noise_step_end_index is not None
             metadata.update(
-                stage1_sampler="ancestral",
+                stage1_sampler="ancestral_span_v2" if span_v2 else "ancestral",
                 stage1_noise_step_index=self.config.ancestral_noise_step_index,
                 stage1_noise_total_steps=self.config.ancestral_noise_total_steps,
                 stage1_ancestral_eta=self.config.ancestral_eta,
                 stage1_ancestral_s_noise=self.config.ancestral_s_noise,
             )
+            if span_v2:
+                metadata.update(
+                    stage1_noise_step_end_index=self.config.ancestral_noise_step_end_index,
+                    stage1_noise_reference_sigmas=self.config.ancestral_noise_reference_sigmas,
+                )
         return metadata
