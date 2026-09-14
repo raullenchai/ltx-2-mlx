@@ -127,3 +127,14 @@ out-of-range mappings fail closed. The runtime primitive is covered by the
 full suite (`669 passed, 22 skipped`), but must remain unused in product
 inference until a trained stage-1 artifact passes held-out latent evaluation,
 blind decoded AV review, and cross-generation Apple Silicon qualification.
+
+The reproducible shared-adapter prototype is
+`scripts/train_stage1_compressed_curriculum.py`. It trains the four selected
+transitions sequentially with their exact original noise lanes and then runs
+a complete low-learning-rate replay pass over all four transitions. Each
+phase runs in a fresh process, resumes from the prior adapter, writes an
+atomic status, and requires the expected checkpoint before advancing. This
+is intentionally not wired into a supervisor until the first `0 -> 3`
+noise-coupled pilot passes held-out evaluation; every transition must then be
+evaluated separately to detect catastrophic forgetting. Full-suite coverage
+after adding the curriculum is `672 passed, 22 skipped`.
