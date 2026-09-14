@@ -11,9 +11,30 @@ import subprocess
 import sys
 from pathlib import Path
 
+from safetensors import safe_open
+
 
 def _run(command: list[str]) -> None:
     subprocess.run(command, check=True)
+
+
+def _review_case(start: Path, output_dir: Path) -> dict[str, object]:
+    index = int(start.stem.removeprefix("latent_"))
+    with safe_open(start, framework="numpy") as checkpoint:
+        prompt = (checkpoint.metadata() or {}).get("prompt", "")
+    case = output_dir / f"case-{index:02d}"
+    return {
+        "index": index,
+        "prompt": prompt,
+        "A": str((case / "A.mp4").relative_to(output_dir)),
+        "B": str((case / "B.mp4").relative_to(output_dir)),
+        "side_by_side_muted": str((case / "AB-side-by-side-muted.mp4").relative_to(output_dir)),
+        "review": {
+            "preferred": None,
+            "perceptible_difference": None,
+            "detail_motion_sync_notes": "",
+        },
+    }
 
 
 def main() -> int:
@@ -37,6 +58,7 @@ def main() -> int:
     randomizer = random.Random(args.mapping_seed)
     mapping: dict[str, dict[str, str]] = {}
     renderer = Path(__file__).with_name("render_stage2_distillation.py")
+    review_cases = []
 
     for progress, start in enumerate(starts, start=1):
         index = int(start.stem.removeprefix("latent_"))
@@ -96,8 +118,15 @@ def main() -> int:
                 ]
             )
         print(f"rendered blind case {progress}/{len(starts)} (index {index})", flush=True)
+        review_cases.append(_review_case(start, args.output_dir))
 
     (args.output_dir / ".blind-mapping.json").write_text(json.dumps(mapping, indent=2, sort_keys=True) + "\n")
+    review_index = {
+        "blinded": True,
+        "instructions": "Review A and B independently with audio, then the muted side-by-side. Do not open .blind-mapping.json before recording judgments.",
+        "cases": review_cases,
+    }
+    (args.output_dir / "review-index.json").write_text(json.dumps(review_index, indent=2, sort_keys=True) + "\n")
     return 0
 
 
