@@ -71,6 +71,35 @@ def test_fast_stage2_uses_student_then_clean_base(monkeypatch) -> None:
     assert not hasattr(pipe, "_pending_loras")
 
 
+def test_terminal_fast_stage2_stops_after_student(monkeypatch) -> None:
+    pipe, loads = _pipeline(monkeypatch)
+    pipe._fast_stage2_package.contract.schedule = (0.909375, 0.0)
+    calls = []
+
+    def denoise(**kwargs):
+        calls.append((kwargs["model"], kwargs["sigmas"]))
+        return DenoiseOutput(
+            video_latent=kwargs["video_state"].latent + 1,
+            audio_latent=kwargs["audio_state"].latent + 1,
+        )
+
+    monkeypatch.setattr(distilled, "denoise_loop", denoise)
+    result = pipe._run_fast_stage2(
+        _state(0),
+        _state(10),
+        mx.zeros((1, 1, 1)),
+        mx.zeros((1, 1, 1)),
+        latent_shape=(1, 1, 2),
+    )
+
+    assert calls == [("student", [0.909375, 0.0])]
+    assert len(loads) == 1
+    assert mx.array_equal(result.video_latent, mx.ones((1, 2, 3))).item()
+    assert pipe.dit is None
+    assert pipe._loaded is False
+    assert not hasattr(pipe, "_pending_loras")
+
+
 def test_fast_stage2_failure_releases_partial_model(monkeypatch) -> None:
     pipe, _loads = _pipeline(monkeypatch)
     monkeypatch.setattr(distilled, "denoise_loop", lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("failed")))

@@ -65,11 +65,28 @@ def test_reads_portable_fast_stage2_contract(tmp_path) -> None:
     assert contract.runtime_contract_major == 1
 
 
+def test_reads_terminal_fast_stage2_contract(tmp_path) -> None:
+    path = _checkpoint(
+        tmp_path,
+        _metadata(
+            fast_stage2_capability="ltx_stage2_terminal_v1",
+            fast_stage2_schedule="[0.909375, 0.0]",
+            stage2_target_sigma="0.0",
+            stage2_steps="1",
+        ),
+    )
+
+    contract = _read(path)
+
+    assert contract.capability == "ltx_stage2_terminal_v1"
+    assert contract.schedule == (0.909375, 0.0)
+
+
 @pytest.mark.parametrize(
     ("overrides", "match"),
     [
         ({"fast_stage2_capability": ""}, "missing 'fast_stage2_capability'"),
-        ({"fast_stage2_schedule": "[0.9, 0.5]"}, "three-sigma"),
+        ({"fast_stage2_schedule": "[0.9, 0.5]"}, "3-sigma"),
         ({"fast_stage2_schedule": "[0.9, 0.9, 0]"}, "decrease strictly"),
         ({"stage2_sigma": "0.8"}, "stage2_sigma does not match"),
         ({"stage2_target_sigma": "0.4"}, "stage2_target_sigma does not match"),

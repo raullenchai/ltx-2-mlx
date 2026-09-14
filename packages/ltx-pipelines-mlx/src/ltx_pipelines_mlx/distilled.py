@@ -174,7 +174,7 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
         *,
         latent_shape: tuple[int, int, int],
     ) -> DenoiseOutput:
-        """Run the learned first transition, then reload base for correction."""
+        """Run a learned transition and its base correction when declared."""
         package = self._fast_stage2_package
         assert package is not None
         strength = package.contract.lora_alpha / package.contract.lora_rank
@@ -203,6 +203,13 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
             del student_model
             self.dit = None
             aggressive_cleanup()
+
+            if len(schedule) == 2:
+                # A qualified terminal student has already reached sigma zero.
+                # Mark the pipeline unloaded so a later request reloads a clean
+                # base model instead of retaining or reusing adapter state.
+                self._loaded = False
+                return learned
 
             self.dit = self._load_transformer_with_optional_streaming(package.transformer_path)
             correction_model = self._stage2_model(self.dit, latent_shape)

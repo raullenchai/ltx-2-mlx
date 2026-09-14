@@ -52,14 +52,18 @@ def main() -> int:
         metadata = source.metadata() or {}
     start_sigma = float(metadata["stage2_sigma"])
     target_sigma = float(metadata["stage2_target_sigma"])
-    if not 0 < target_sigma < start_sigma <= 1:
-        raise ValueError("only progressive stage-2 checkpoints can be packaged")
+    if not 0 <= target_sigma < start_sigma <= 1:
+        raise ValueError("stage-2 checkpoint must decrease from a valid start sigma")
+
+    terminal = target_sigma == 0.0
+    capability = "ltx_stage2_terminal_v1" if terminal else "ltx_stage2_transition_v1"
+    schedule = [start_sigma, 0.0] if terminal else [start_sigma, target_sigma, 0.0]
 
     output_metadata = dict(metadata)
     output_metadata.update(
-        fast_stage2_capability="ltx_stage2_transition_v1",
-        fast_stage2_schedule=json.dumps([start_sigma, target_sigma, 0.0], separators=(",", ":")),
-        stage2_steps="2",
+        fast_stage2_capability=capability,
+        fast_stage2_schedule=json.dumps(schedule, separators=(",", ":")),
+        stage2_steps=str(len(schedule) - 1),
         base_model_id=args.base_model_id,
         base_revision=args.base_revision,
         transformer_file=args.transformer_file,

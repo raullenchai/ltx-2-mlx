@@ -49,13 +49,19 @@ def _required(metadata: dict[str, str], key: str) -> str:
     return value
 
 
-def _parse_schedule(value: str) -> tuple[float, ...]:
+def _parse_schedule(value: str, capability: str) -> tuple[float, ...]:
     try:
         raw = json.loads(value)
     except json.JSONDecodeError as exc:
         raise ValueError("fast_stage2_schedule must be valid JSON") from exc
-    if not isinstance(raw, list) or len(raw) != 3:
-        raise ValueError("ltx_stage2_transition_v1 requires a three-sigma schedule")
+    expected_length = {
+        "ltx_stage2_transition_v1": 3,
+        "ltx_stage2_terminal_v1": 2,
+    }.get(capability)
+    if expected_length is None:
+        raise ValueError(f"unsupported fast stage-2 capability {capability!r}")
+    if not isinstance(raw, list) or len(raw) != expected_length:
+        raise ValueError(f"{capability} requires a {expected_length}-sigma schedule")
     if any(isinstance(item, bool) or not isinstance(item, (int, float)) for item in raw):
         raise ValueError("fast_stage2_schedule must contain only numbers")
     schedule = tuple(float(item) for item in raw)
@@ -191,18 +197,16 @@ def read_fast_stage2_contract(
     with safe_open(path, framework="numpy") as checkpoint:
         metadata = checkpoint.metadata() or {}
         capability = _required(metadata, "fast_stage2_capability")
-        if capability != "ltx_stage2_transition_v1":
-            raise ValueError(f"unsupported fast stage-2 capability {capability!r}")
-
-        schedule = _parse_schedule(_required(metadata, "fast_stage2_schedule"))
+        schedule = _parse_schedule(_required(metadata, "fast_stage2_schedule"), capability)
         start_sigma = float(_required(metadata, "stage2_sigma"))
         target_sigma = float(_required(metadata, "stage2_target_sigma"))
         if not math.isclose(start_sigma, schedule[0], rel_tol=0.0, abs_tol=1e-12):
             raise ValueError("stage2_sigma does not match fast_stage2_schedule")
         if not math.isclose(target_sigma, schedule[1], rel_tol=0.0, abs_tol=1e-12):
             raise ValueError("stage2_target_sigma does not match fast_stage2_schedule")
-        if int(_required(metadata, "stage2_steps")) != 2:
-            raise ValueError("ltx_stage2_transition_v1 requires stage2_steps=2")
+        expected_steps = len(schedule) - 1
+        if int(_required(metadata, "stage2_steps")) != expected_steps:
+            raise ValueError(f"{capability} requires stage2_steps={expected_steps}")
 
         rank = int(_required(metadata, "lora_rank"))
         alpha = float(_required(metadata, "lora_alpha"))
