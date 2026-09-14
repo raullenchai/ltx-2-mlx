@@ -150,6 +150,20 @@ checkpointing measured 21.52 GiB at 468 video tokens, 31.63 GiB at 3072, and
 50.10 GiB at 6144. Use a 468 -> 1536 -> 3072-token curriculum and reserve
 6144-token full-resolution generation for validation.
 
+The trainer must materialize both the loss and gradient tree before gradient
+clipping and the optimizer update. MLX evaluates lazily; materializing only
+the scalar loss allows backward, clipping, and AdamW to remain in one graph
+and can make their memory peaks additive. With the phase boundary in place, a
+real 3072-video-token / 1024-text-token rank-8 run completed 16/16 steps on the
+same host in 18.6 minutes. A mixed 468/1536/3072-token process also completed,
+so the fix is not tied to a fixed shape or a device-specific dispatch.
+
+Curriculum resume additionally requires converting saved diffusers-style
+`.lora_A.weight` / `.lora_B.weight` tensors back to MLX's `.lora_a` /
+`.lora_b` names and transposing them. Treat a checkpoint with no compatible
+adapter tensors as an error; a log line saying that a path was opened is not
+proof that weights were restored.
+
 ## Related MLX runtime survey
 
 On 2026-09-13, source inspection covered `mlx-vlm` commit

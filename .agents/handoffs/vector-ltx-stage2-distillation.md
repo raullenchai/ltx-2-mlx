@@ -67,3 +67,34 @@ The 468 stage is stable through step 5 at 12.63 seconds/step and loss `0.1746`.
 checkpoint before advancing. After completion, evaluate all stage checkpoints
 on the matching validation bucket and the final checkpoint across all 20
 items. Never use validation prompts for optimization.
+
+## Trainer and resume corrections (2026-09-14)
+
+Two generic trainer defects were found while continuing at 3072 tokens:
+
+- The loop materialized only `loss`, leaving lazy backward, clipping, and
+  AdamW graphs connected. Materializing `(loss, grads)` at the phase boundary
+  changed the real 3072-token run from two pre-step-1 OS kills to a complete
+  16/16 run (18.6 minutes). The same fix completed a variable-shape mixed run.
+- Saved adapters use diffusers keys and transposed tensors, but resume filtered
+  only native lowercase keys. The path was logged while zero adapter tensors
+  were actually loaded. Resume now converts `.lora_A.weight` and
+  `.lora_B.weight` back to `.lora_a` and `.lora_b`, transposes them, and fails
+  closed if no compatible tensors exist. A round-trip regression test covers
+  the format. Python dataloader shuffling is now seeded alongside MLX.
+
+After the resume fix, 24 low-learning-rate mixed-replay steps from the
+1536-token step-50 checkpoint improved held-out video/audio MSE in every
+bucket: 468 by 0.32%/0.54%, 1536 by 0.21%/1.14%, and 3072 by 0.16%/1.30%.
+These are anti-regression results, not evidence of perceptual equivalence.
+The valid candidate is
+`output-rank8-mixed-replay-resume-fixed/checkpoints/lora_weights_step_00024.safetensors`.
+Earlier `output-rank8-3072-graph-boundary` and
+`output-rank8-mixed-replay-low-lr` checkpoints started from zero because of
+the resume bug and must not be used.
+
+A new blind 10-second decoded A/B reuses the previous prompt, seed, teacher
+trajectory, and encode settings. Record human feedback before revealing the
+mapping. If long-form detail or exposure still trails, add a long-temporal,
+lower-spatial bucket whose total token count remains trainable; do not add
+chip-model or installed-memory branches to product inference.
