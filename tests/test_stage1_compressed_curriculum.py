@@ -1,6 +1,16 @@
 from pathlib import Path
 
-from scripts.train_stage1_compressed_curriculum import PHASES, PRIMARY_PHASES, REPLAY_PHASES, build_config
+import numpy as np
+import pytest
+from safetensors.numpy import save_file
+
+from scripts.train_stage1_compressed_curriculum import (
+    PHASES,
+    PRIMARY_PHASES,
+    REPLAY_PHASES,
+    build_config,
+    validate_phase_checkpoint,
+)
 
 
 def test_curriculum_uses_selected_boundaries_and_original_noise_lanes() -> None:
@@ -58,3 +68,29 @@ def test_terminal_phase_draws_no_noise_and_replay_is_low_lr() -> None:
     assert config["training_strategy"]["target_sigma"] == 0.0
     assert "ancestral_noise_step_index" not in config["training_strategy"]
     assert all(phase.learning_rate == 1.0e-6 and phase.steps == 24 for phase in REPLAY_PHASES)
+
+
+def test_phase_checkpoint_validation_rejects_stale_transition(tmp_path) -> None:
+    phase = PRIMARY_PHASES[0]
+    metadata = {
+        "distillation": "stage1_transition",
+        "stage1_sigma": "1.0",
+        "stage1_target_sigma": "0.98125",
+        "stage1_video_start_latents_dir": "stage1_video_step_00",
+        "stage1_video_target_latents_dir": "stage1_video_step_03",
+        "stage1_audio_start_latents_dir": "stage1_audio_step_00",
+        "stage1_audio_target_latents_dir": "stage1_audio_step_03",
+        "stage1_sampler": "ancestral",
+        "stage1_noise_step_index": "0",
+        "stage1_noise_total_steps": "8",
+        "lora_rank": "8",
+        "lora_alpha": "8",
+    }
+    checkpoint = tmp_path / "checkpoint.safetensors"
+    save_file({"weight": np.zeros((1,), dtype=np.float32)}, checkpoint, metadata=metadata)
+    validate_phase_checkpoint(checkpoint, phase)
+
+    metadata["stage1_target_sigma"] = "0.909375"
+    save_file({"weight": np.zeros((1,), dtype=np.float32)}, checkpoint, metadata=metadata)
+    with pytest.raises(ValueError, match="stage1_target_sigma"):
+        validate_phase_checkpoint(checkpoint, phase)

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
+from safetensors import safe_open
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,35 @@ REPLAY_PHASES = tuple(
     for phase in PRIMARY_PHASES
 )
 PHASES = PRIMARY_PHASES + REPLAY_PHASES
+
+
+def validate_phase_checkpoint(path: Path, phase: Phase) -> None:
+    """Reject a stale checkpoint whose metadata does not match its phase."""
+    with safe_open(path, framework="numpy") as checkpoint:
+        metadata = checkpoint.metadata() or {}
+    expected = {
+        "distillation": "stage1_transition",
+        "stage1_sigma": str(phase.sigma),
+        "stage1_target_sigma": str(phase.target_sigma),
+        "stage1_video_start_latents_dir": f"stage1_video_step_{phase.start_index:02d}",
+        "stage1_video_target_latents_dir": f"stage1_video_step_{phase.target_index:02d}",
+        "stage1_audio_start_latents_dir": f"stage1_audio_step_{phase.start_index:02d}",
+        "stage1_audio_target_latents_dir": f"stage1_audio_step_{phase.target_index:02d}",
+    }
+    for key, value in expected.items():
+        if metadata.get(key) != value:
+            raise ValueError(f"checkpoint {path} does not match {phase.name}: {key}")
+    if int(metadata.get("lora_rank", "0")) <= 0 or float(metadata.get("lora_alpha", "0")) <= 0:
+        raise ValueError(f"checkpoint {path} does not declare a valid LoRA scale")
+    if phase.noise_step_index is None:
+        if "stage1_noise_step_index" in metadata or metadata.get("stage1_sampler") == "ancestral":
+            raise ValueError(f"checkpoint {path} incorrectly declares terminal ancestral noise")
+    elif (
+        metadata.get("stage1_sampler") != "ancestral"
+        or int(metadata.get("stage1_noise_step_index", "-1")) != phase.noise_step_index
+        or int(metadata.get("stage1_noise_total_steps", "0")) != 8
+    ):
+        raise ValueError(f"checkpoint {path} does not match {phase.name}: ancestral noise lane")
 
 
 def build_config(
@@ -142,6 +172,7 @@ def main() -> int:
             output = args.output_root / phase.name
             expected = output / "checkpoints" / f"lora_weights_step_{phase.steps:05d}.safetensors"
             if expected.is_file():
+                validate_phase_checkpoint(expected, phase)
                 checkpoint = expected
                 continue
             output.mkdir(parents=True, exist_ok=True)
@@ -165,6 +196,7 @@ def main() -> int:
                 )
             if not expected.is_file():
                 raise FileNotFoundError(f"training completed without expected checkpoint: {expected}")
+            validate_phase_checkpoint(expected, phase)
             checkpoint = expected
     except Exception:
         _write_status(args.output_root, "training-failed")

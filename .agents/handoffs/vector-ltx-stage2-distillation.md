@@ -133,7 +133,9 @@ The reproducible shared-adapter prototype is
 transitions sequentially with their exact original noise lanes and then runs
 a complete low-learning-rate replay pass over all four transitions. Each
 phase runs in a fresh process, resumes from the prior adapter, writes an
-atomic status, and requires the expected checkpoint before advancing. This
+atomic status, and requires the expected checkpoint before advancing. Existing
+and newly written handoff checkpoints are metadata-validated against the exact
+phase before use, so a stale schedule cannot silently resume. This
 is intentionally not wired into a supervisor until the first `0 -> 3`
 noise-coupled pilot passes held-out evaluation; every transition must then be
 evaluated separately to detect catastrophic forgetting.
@@ -155,4 +157,4 @@ Absent the flag, the existing eight-step path is unchanged. This is a public
 experimental API and default/marketing decisions remain Atlas-owned. It must
 not be presented as available model functionality until a real shared adapter
 passes all quality gates. Full-suite coverage for the contract and lifecycle
-is `694 passed, 22 skipped`.
+is `695 passed, 22 skipped`.
