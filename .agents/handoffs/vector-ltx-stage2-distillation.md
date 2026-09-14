@@ -158,3 +158,9 @@ experimental API and default/marketing decisions remain Atlas-owned. It must
 not be presented as available model functionality until a real shared adapter
 passes all quality gates. Full-suite coverage for the contract and lifecycle
 is `695 passed, 22 skipped`.
+
+`scripts/analyze_blind_av_suite.py` computes per-case anonymous video
+SSIM/PSNR and channel-wise audio APSNR without opening the hidden mapping. It
+was checked against case 00 and reproduced SSIM `0.889730`, PSNR `28.984457`
+dB, and audio APSNR `169.207`/`169.205` dB. The full suite now has `697`
+passes and `22` skips.

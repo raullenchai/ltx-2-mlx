@@ -153,6 +153,19 @@ adapter as a fast inference tier until it passes paired teacher/student video,
 audio, synchronization, and latency evaluation. A lower training loss alone
 is not a quality gate.
 
+For a completed blinded suite, record anonymous same-seed diagnostics without
+opening `.blind-mapping.json`:
+
+```bash
+python scripts/analyze_blind_av_suite.py \
+  --blind-dir /path/to/blind-suite \
+  --output /path/to/blind-suite/anonymous-metrics.json
+```
+
+The report contains per-case and mean video SSIM/PSNR plus channel-wise audio
+APSNR. These metrics help find outliers but do not replace the blind human
+review, and the analyzer deliberately never reads the hidden mapping.
+
 ## MZR-3 envelope
 
 On the 48 GiB M4 Pro test host, rank-8 Q/K/V backward with gradient
