@@ -282,7 +282,15 @@ class LtxvTrainer:
             batch_size=cfg.optimization.batch_size,
         )
 
-        saved_path = self._save_checkpoint()
+        checkpoint_prefix = "lora" if cfg.model.training_mode == "lora" else "model"
+        expected_final_name = f"{checkpoint_prefix}_weights_step_{self._global_step:05d}.safetensors"
+        if self._checkpoint_paths and self._checkpoint_paths[-1].name == expected_final_name:
+            # The final optimization step may already have hit the periodic
+            # checkpoint interval. Reuse it instead of writing it twice and
+            # counting the duplicate toward keep_last_n.
+            saved_path = self._checkpoint_paths[-1]
+        else:
+            saved_path = self._save_checkpoint()
 
         self._log_training_stats(stats)
 
