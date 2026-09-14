@@ -166,7 +166,12 @@ class LtxvTrainer:
 
                 # Forward + backward
                 loss, grads = loss_and_grad_fn(batch)
-                _materialize(loss)
+                # MLX executes lazily. Materialize the gradients at this
+                # boundary so gradient clipping and the optimizer update do
+                # not extend the full forward/backward graph. Besides making
+                # step accounting accurate, this keeps peak memory bounded by
+                # the largest phase instead of the sum of all three phases.
+                _materialize((loss, grads))
 
                 # Accumulate gradients
                 if accum_steps > 1:
