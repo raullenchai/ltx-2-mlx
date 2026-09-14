@@ -1,5 +1,5 @@
 # Noise-coupled pilot for the first compressed LTX-2.5 stage-1 transition.
-# It learns original boundaries 0 -> 2 while runtime re-injects the exact
+# It learns original boundaries 0 -> 3 while runtime re-injects the exact
 # seeded noise lane for original step 0. This is research-only until decoded
 # motion and multi-seed diversity pass prompt-disjoint blind evaluation.
 
@@ -31,11 +31,11 @@ data:
 training_strategy:
   name: stage1_transition_distill
   sigma: 1.0
-  target_sigma: 0.9875
+  target_sigma: 0.98125
   video_start_latents_dir: stage1_video_step_00
-  video_terminal_latents_dir: stage1_video_step_02
+  video_terminal_latents_dir: stage1_video_step_03
   audio_start_latents_dir: stage1_audio_step_00
-  audio_terminal_latents_dir: stage1_audio_step_02
+  audio_terminal_latents_dir: stage1_audio_step_03
   conditions_dir: stage1_conditions
   ancestral_noise_step_index: 0
   ancestral_noise_total_steps: 8

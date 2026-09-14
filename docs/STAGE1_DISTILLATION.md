@@ -30,7 +30,7 @@ that a terminal student cannot inject. Better latent MSE does not establish
 motion or diversity preservation.
 
 `stage1_stochastic_transition_distill.yaml` instead maps non-terminal
-boundaries `0 -> 2`. It reproduces the original seeded noise lane, removes that
+boundaries `0 -> 3`. It reproduces the original seeded noise lane, removes that
 known runtime noise from the supervised velocity target, and re-injects it in
 the ancestral evaluator. A noise-coupled transition is forbidden from targeting
 sigma zero.
@@ -64,6 +64,12 @@ The analyzer preserves the original final `0.421875 -> 0` correction and ranks
 all four-evaluation candidates by video/audio chord error. This is diagnostic:
 the chosen schedule still requires end-to-end decoded blind tests across two
 seeds per high-risk prompt.
+
+On the initial eight training and two prompt-disjoint validation trajectories,
+both splits independently selected boundaries `[0, 3, 5, 7, 8]`, or sigmas
+`[1.0, 0.98125, 0.909375, 0.421875, 0]`. This `3 + 2 + 2 + 1` grouping is the
+first four-evaluation candidate; the agreement is useful evidence but the
+sample count remains too small to serve as a quality gate.
 
 ## Acceptance
 
