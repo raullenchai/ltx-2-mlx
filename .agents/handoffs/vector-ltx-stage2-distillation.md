@@ -165,6 +165,17 @@ was checked against case 00 and reproduced SSIM `0.889730`, PSNR `28.984457`
 dB, and audio APSNR `169.207`/`169.205` dB. The full suite now has `697`
 passes and `22` skips.
 
+The full progressive Stage-2 blind suite completed: 10/10 cases, each
+768x512, 241 frames at 24 fps with 48 kHz stereo audio. Without opening the
+mapping, aggregate diagnostics are video SSIM `0.924042`, video PSNR `32.504`
+dB, and audio APSNR `167.519` dB. The lowest same-seed visual similarities are
+case 03 (`0.840896`) and case 08 (`0.825009`), so human review should focus on
+their camera/natural-motion behavior. Only A/B/side-by-side files, the review
+index, and anonymous metrics were copied to
+`123/strategy/ltx-stage2-qualification-2026-09-14/`; no named teacher/student
+files or hidden mapping were copied. Human judgments are still required before
+revealing the mapping or calling the ten-case suite a pass.
+
 `scripts/run_stage1_compressed_qualification.py` now provides the next
 fail-closed supervisor stage. It advances from the first noise-coupled pilot
 only when both mean video and audio MSE improve by at least 10% and no held-out
