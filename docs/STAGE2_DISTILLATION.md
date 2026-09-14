@@ -78,6 +78,16 @@ model, dataset, and output paths, then run the normal trainer command:
 ltx-2-mlx train --config /path/to/stage2_terminal_distill.yaml
 ```
 
+For the frozen multi-resolution dataset, the resumable curriculum runner keeps
+each shape phase in a separate process and verifies every handoff checkpoint:
+
+```bash
+python scripts/train_stage2_terminal_curriculum.py \
+  --model /path/to/ltx-2.5-mlx-q8/snapshot \
+  --data-root /private/tmp/LTX-progressive-scale \
+  --output-root /private/tmp/LTX-terminal-curriculum
+```
+
 The strategy fixes sigma at `0.909375` and constructs the velocity target
 
 ```text
@@ -185,3 +195,24 @@ On 2026-09-13, source inspection covered `mlx-vlm` commit
 
 The highest-leverage route therefore remains fewer transformer evaluations
 with a perceptual quality gate, not porting an LLM-serving kernel wholesale.
+
+## Package a qualified checkpoint
+
+Only after decoded qualification, bind either checkpoint type to its immutable
+base model revision:
+
+```bash
+python scripts/package_fast_stage2.py \
+  --model-dir /path/to/immutable/model/snapshot \
+  --checkpoint /path/to/qualified/lora.safetensors \
+  --output-dir /path/to/package \
+  --base-model-id owner/model \
+  --base-revision 0123456789abcdef0123456789abcdef01234567 \
+  --qualification-revision qual-v1
+```
+
+Progressive checkpoints become `ltx_stage2_transition_v1` with a three-sigma
+schedule and a clean-base final correction. Terminal checkpoints become
+`ltx_stage2_terminal_v1` with a two-sigma schedule and no correction. Runtime
+validates the capability, exact schedule, base identity/config fingerprint,
+adapter digest and shapes before applying the adapter.
