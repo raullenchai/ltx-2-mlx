@@ -69,6 +69,7 @@ def main() -> int:
     parser.add_argument("--validation-data", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--transformer-file", default="transformer-distilled.safetensors")
+    parser.add_argument("--noise-coupling", choices=("lane", "span-v2"), default="lane")
     parser.add_argument("--minimum-improvement-percent", type=float, default=10.0)
     parser.add_argument("--max-sample-regression-percent", type=float, default=5.0)
     args = parser.parse_args()
@@ -104,6 +105,8 @@ def main() -> int:
                     str(args.output_root / "curriculum"),
                     "--transformer-file",
                     args.transformer_file,
+                    "--noise-coupling",
+                    args.noise_coupling,
                 ],
                 stdout=log,
                 stderr=subprocess.STDOUT,
