@@ -164,3 +164,10 @@ SSIM/PSNR and channel-wise audio APSNR without opening the hidden mapping. It
 was checked against case 00 and reproduced SSIM `0.889730`, PSNR `28.984457`
 dB, and audio APSNR `169.207`/`169.205` dB. The full suite now has `697`
 passes and `22` skips.
+
+`scripts/run_stage1_compressed_qualification.py` now provides the next
+fail-closed supervisor stage. It advances from the first noise-coupled pilot
+only when both mean video and audio MSE improve by at least 10% and no held-out
+sample regresses by more than 5%; passing this gate starts the full curriculum
+and its four-transition evaluation. This gate authorizes compute only, not
+product acceptance. The full suite is `699 passed, 22 skipped`.
