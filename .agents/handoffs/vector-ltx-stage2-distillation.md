@@ -45,3 +45,18 @@ Vector should collect at least 100 balanced progressive trajectories across
 training plus blinded decoded AV review. Atlas should review the eventual
 checkpoint dispatch and ensure the adapter is active only for its distilled
 transition, not stage 1 or the final base correction.
+
+## Scale capture in progress (2026-09-14)
+
+Commit `c475352` freezes a 100-trajectory prompt-disjoint manifest and adds
+resumable bucket capture plus hard-linked split tooling. The distribution is
+80 train / 20 validation and 60x468 / 30x1536 / 10x3072 video tokens.
+
+MZR-3 is capturing into `/private/tmp/LTX-progressive-scale.zv79Uv`. The 468
+bucket is running first; `/private/tmp/LTX-scale-supervisor.sh` verifies exactly
+420 files before starting 1536, then verifies 630 before starting 3072. Monitor
+`capture-scale.status` and the three bucket logs. A verified first item has
+shape `[468, 128]`, latent dimensions `[13, 6, 6]`, sigma `0.909375`, and seed
+1000. When status reaches `complete: 700/700 files`, run the checked-in split
+script, archive the source trajectories to the Studio dataset tier, and train
+against `splits/train`; never use validation prompts for checkpoint selection.
