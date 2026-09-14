@@ -36,12 +36,34 @@ def main() -> int:
     if args.limit is not None:
         prompts = prompts[: args.limit]
 
-    pipeline = DistilledPipeline(
-        args.model,
-        low_memory=True,
-        low_ram_streaming=args.low_ram_streaming,
-    )
     for index, prompt in enumerate(prompts):
+        # A low-memory generation releases the VAE encoder and upsampler.
+        # Construct per sample so a multi-prompt capture never reuses that
+        # intentionally freed component state. Existing complete samples are
+        # skipped so interrupted captures can resume safely.
+        precomputed = args.output / ".precomputed"
+        latent_name = f"latent_{index:04d}.safetensors"
+        expected = [
+            precomputed / source / latent_name
+            for source in (
+                "stage2_video_start_latents",
+                "stage2_video_terminal_latents",
+                "stage2_audio_start_latents",
+                "stage2_audio_terminal_latents",
+            )
+        ]
+        expected.append(precomputed / "conditions" / f"condition_{index:04d}.safetensors")
+        present = [path for path in expected if path.exists()]
+        if len(present) == len(expected):
+            print(f"skipped existing trajectory {index + 1}/{len(prompts)}")
+            continue
+        if present:
+            raise RuntimeError(f"trajectory {index} is incomplete ({len(present)}/{len(expected)} files); inspect it")
+        pipeline = DistilledPipeline(
+            args.model,
+            low_memory=True,
+            low_ram_streaming=args.low_ram_streaming,
+        )
         callback = partial(save_stage2_trajectory, args.output, index)
         pipeline.generate_two_stage(
             prompt,

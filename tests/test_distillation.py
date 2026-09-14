@@ -6,6 +6,7 @@ import pytest
 
 from ltx_trainer_mlx.datasets import PrecomputedDataset
 from ltx_trainer_mlx.distillation import euler_step, lora_disabled, terminal_velocity_target
+from ltx_trainer_mlx.distillation_evaluator import terminal_sigma_schedule
 from ltx_trainer_mlx.training_strategies.stage2_terminal_distill import (
     Stage2TerminalDistillConfig,
     Stage2TerminalDistillStrategy,
@@ -38,6 +39,10 @@ def test_terminal_velocity_target_reaches_teacher_terminal() -> None:
     reconstructed = euler_step(sample, velocity, sigma, 0.0)
 
     assert mx.allclose(reconstructed, terminal, atol=1e-6).item()
+
+
+def test_terminal_checkpoint_schedule_jumps_to_zero() -> None:
+    assert terminal_sigma_schedule({"stage2_sigma": "0.909375"}) == [0.909375, 0.0]
 
 
 @pytest.mark.parametrize("sigma", [0.0, -0.1])

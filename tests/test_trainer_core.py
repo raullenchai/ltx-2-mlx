@@ -124,6 +124,15 @@ class TestLoraCheckpointFormat:
             "sigma": "0.909375",
         }
 
+    def test_lora_scale_is_persisted_in_checkpoint_metadata(self) -> None:
+        from ltx_trainer_mlx.trainer import LtxvTrainer
+
+        trainer = object.__new__(LtxvTrainer)
+        trainer._training_strategy = type("Strategy", (), {"get_checkpoint_metadata": lambda _self: {}})()
+        trainer._config = type("Config", (), {"lora": type("Lora", (), {"rank": 8, "alpha": 4})()})()
+
+        assert trainer._build_checkpoint_metadata() == {"lora_rank": "8", "lora_alpha": "4"}
+
     @pytest.fixture()
     def lora_checkpoint(self, tmp_path: Path) -> tuple[Path, int, int, int]:
         """Create a small model with LoRA layers and save a checkpoint."""

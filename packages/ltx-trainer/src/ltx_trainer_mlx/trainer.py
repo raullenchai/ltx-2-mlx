@@ -844,7 +844,14 @@ class LtxvTrainer:
 
     def _build_checkpoint_metadata(self) -> dict[str, str]:
         """Return strategy metadata converted for safetensors."""
-        return {key: str(value) for key, value in self._training_strategy.get_checkpoint_metadata().items()}
+        metadata = dict(self._training_strategy.get_checkpoint_metadata())
+        config = getattr(self, "_config", None)
+        lora = getattr(config, "lora", None)
+        if lora is not None:
+            # LoRALinear applies alpha/rank during training, while generic
+            # safetensors fusion consumes an explicit strength.
+            metadata.update(lora_rank=lora.rank, lora_alpha=lora.alpha)
+        return {key: str(value) for key, value in metadata.items()}
 
     def _cleanup_checkpoints(self) -> None:
         """Clean up old checkpoints."""

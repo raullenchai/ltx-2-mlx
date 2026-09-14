@@ -45,7 +45,35 @@ velocity_target = (stage2_start - teacher_terminal) / sigma
 so a single Euler step to sigma zero lands on the teacher terminal. Both video
 and audio losses are enabled. Saved checkpoints include
 `distillation=stage2_terminal`, `stage2_sigma=0.909375`, and
-`stage2_steps=1` safetensors metadata.
+`stage2_steps=1` safetensors metadata. LoRA checkpoints also retain `lora_rank`
+and `lora_alpha`, so fusion uses the same scale as training.
+
+This is a terminal jump with the exact schedule `[0.909375, 0.0]`. The normal
+`stage2_steps=1` pipeline option only truncates the original schedule to
+`[0.909375, 0.725]`; it is not interchangeable with this checkpoint.
+
+## Evaluate the student
+
+Evaluate on held-out teacher trajectories before integrating inference:
+
+```bash
+PYTHONPATH=packages/ltx-core-mlx/src:packages/ltx-pipelines-mlx/src:packages/ltx-trainer/src \
+python scripts/evaluate_stage2_distillation.py \
+  --model /path/to/ltx-2.5-mlx-q8/snapshot \
+  --checkpoint /path/to/lora_weights_step_00500.safetensors \
+  --data /path/to/held-out-trajectories \
+  --output /path/to/metrics.json
+```
+
+The evaluator fuses the adapter only into a standalone stage-2 transformer,
+runs exactly one model evaluation, and reports paired video/audio latent MSE,
+MAE, relative RMSE, cosine similarity, and latency. This prevents the
+stage-2-only adapter from changing stage 1. Use
+`configs/stage2_terminal_pilot_prompts.txt` as the initial motion, speech,
+impact, ambience, and synchronization coverage set.
+
+Omit `--checkpoint` to measure the unadapted one-evaluation baseline against
+the same teacher trajectories.
 
 Start with rank-8 Q/K/V adapters as a capacity probe. Do not expose a trained
 adapter as a fast inference tier until it passes paired teacher/student video,
@@ -58,4 +86,3 @@ On the 48 GiB M4 Pro test host, rank-8 Q/K/V backward with gradient
 checkpointing measured 21.52 GiB at 468 video tokens, 31.63 GiB at 3072, and
 50.10 GiB at 6144. Use a 468 -> 1536 -> 3072-token curriculum and reserve
 6144-token full-resolution generation for validation.
-
