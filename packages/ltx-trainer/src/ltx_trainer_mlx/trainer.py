@@ -112,6 +112,7 @@ class LtxvTrainer:
 
         # Set random seed
         mx.random.seed(cfg.seed)
+        random.seed(cfg.seed)
         logger.debug("Using seed: %d", cfg.seed)
 
         self._init_optimizer()
