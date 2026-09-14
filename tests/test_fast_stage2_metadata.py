@@ -11,6 +11,7 @@ from ltx_core_mlx.loader.fast_stage2 import read_fast_stage2_contract, read_fast
 
 _REVISION = "a" * 40
 _CONFIG_SHA256 = "b" * 64
+_TRANSFORMER_SHA256 = "c" * 64
 
 
 def _metadata(**overrides: str) -> dict[str, str]:
@@ -25,6 +26,7 @@ def _metadata(**overrides: str) -> dict[str, str]:
         "base_model_id": "example/ltx-2.5-mlx-q8",
         "base_revision": _REVISION,
         "transformer_file": "transformer-distilled.safetensors",
+        "transformer_sha256": _TRANSFORMER_SHA256,
         "transformer_config_sha256": _CONFIG_SHA256,
         "pipeline_family": "distilled_two_stage_ltx25",
         "runtime_contract_major": "1",
@@ -48,6 +50,7 @@ def _read(path, **overrides):
         "base_model_id": "example/ltx-2.5-mlx-q8",
         "base_revision": _REVISION,
         "transformer_file": "transformer-distilled.safetensors",
+        "transformer_sha256": _TRANSFORMER_SHA256,
         "transformer_config_sha256": _CONFIG_SHA256,
     }
     kwargs.update(overrides)
@@ -110,6 +113,7 @@ def test_rejects_malformed_contract(tmp_path, overrides, match) -> None:
         ("base_model_id", "other/model", "model identifier mismatch"),
         ("base_revision", "c" * 40, "base revision mismatch"),
         ("transformer_file", "other.safetensors", "transformer filename mismatch"),
+        ("transformer_sha256", "d" * 64, "content digest mismatch"),
         ("transformer_config_sha256", "d" * 64, "config fingerprint mismatch"),
     ],
 )
@@ -139,9 +143,13 @@ def test_reads_self_contained_fast_stage2_package(tmp_path) -> None:
     config = tmp_path / "embedded_config.json"
     config.write_text('{"transformer":{"model_version":"2.5.0"}}')
     config_sha256 = hashlib.sha256(config.read_bytes()).hexdigest()
-    adapter = _checkpoint(tmp_path, _metadata(transformer_config_sha256=config_sha256))
     transformer = tmp_path / "transformer-distilled.safetensors"
     transformer.write_bytes(b"base placeholder")
+    transformer_sha256 = hashlib.sha256(transformer.read_bytes()).hexdigest()
+    adapter = _checkpoint(
+        tmp_path,
+        _metadata(transformer_config_sha256=config_sha256, transformer_sha256=transformer_sha256),
+    )
     manifest = {
         "schema_version": 1,
         "adapter_file": adapter.name,
@@ -149,6 +157,7 @@ def test_reads_self_contained_fast_stage2_package(tmp_path) -> None:
         "base_model_id": "example/ltx-2.5-mlx-q8",
         "base_revision": _REVISION,
         "transformer_file": transformer.name,
+        "transformer_sha256": transformer_sha256,
     }
     (tmp_path / "fast-stage2.json").write_text(json.dumps(manifest))
 
@@ -165,15 +174,20 @@ def test_reads_self_contained_fast_stage2_package(tmp_path) -> None:
         ("schema_version", 2, "schema_version=1"),
         ("adapter_file", "../adapter.safetensors", "one local .safetensors"),
         ("transformer_file", "/tmp/base.safetensors", "one local .safetensors"),
+        ("transformer_sha256", "d" * 64, "content digest mismatch"),
     ],
 )
 def test_rejects_invalid_fast_stage2_package_paths(tmp_path, field, value, match) -> None:
     config = tmp_path / "config.json"
     config.write_text("{}")
     config_sha256 = hashlib.sha256(config.read_bytes()).hexdigest()
-    adapter = _checkpoint(tmp_path, _metadata(transformer_config_sha256=config_sha256))
     transformer = tmp_path / "transformer-distilled.safetensors"
     transformer.write_bytes(b"base placeholder")
+    transformer_sha256 = hashlib.sha256(transformer.read_bytes()).hexdigest()
+    adapter = _checkpoint(
+        tmp_path,
+        _metadata(transformer_config_sha256=config_sha256, transformer_sha256=transformer_sha256),
+    )
     manifest = {
         "schema_version": 1,
         "adapter_file": adapter.name,
@@ -181,6 +195,7 @@ def test_rejects_invalid_fast_stage2_package_paths(tmp_path, field, value, match
         "base_model_id": "example/ltx-2.5-mlx-q8",
         "base_revision": _REVISION,
         "transformer_file": transformer.name,
+        "transformer_sha256": transformer_sha256,
         field: value,
     }
     (tmp_path / "fast-stage2.json").write_text(json.dumps(manifest))

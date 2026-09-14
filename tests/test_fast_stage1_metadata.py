@@ -11,6 +11,7 @@ from ltx_core_mlx.loader.fast_stage1 import read_fast_stage1_contract, read_fast
 
 _REVISION = "a" * 40
 _CONFIG_SHA256 = "b" * 64
+_TRANSFORMER_SHA256 = "c" * 64
 
 
 def _metadata(**overrides: str) -> dict[str, str]:
@@ -28,6 +29,7 @@ def _metadata(**overrides: str) -> dict[str, str]:
         "base_model_id": "example/ltx-2.5-mlx-q8",
         "base_revision": _REVISION,
         "transformer_file": "transformer-distilled.safetensors",
+        "transformer_sha256": _TRANSFORMER_SHA256,
         "transformer_config_sha256": _CONFIG_SHA256,
         "pipeline_family": "distilled_two_stage_ltx25",
         "runtime_contract_major": "1",
@@ -55,6 +57,7 @@ def _read(path, **overrides):
         "base_model_id": "example/ltx-2.5-mlx-q8",
         "base_revision": _REVISION,
         "transformer_file": "transformer-distilled.safetensors",
+        "transformer_sha256": _TRANSFORMER_SHA256,
         "transformer_config_sha256": _CONFIG_SHA256,
     }
     kwargs.update(overrides)
@@ -99,9 +102,13 @@ def test_reads_self_contained_stage1_package(tmp_path) -> None:
     config = tmp_path / "embedded_config.json"
     config.write_text('{"transformer":{"model_version":"2.5.0"}}')
     config_sha256 = hashlib.sha256(config.read_bytes()).hexdigest()
-    adapter = _checkpoint(tmp_path, _metadata(transformer_config_sha256=config_sha256))
     transformer = tmp_path / "transformer-distilled.safetensors"
     transformer.write_bytes(b"base placeholder")
+    transformer_sha256 = hashlib.sha256(transformer.read_bytes()).hexdigest()
+    adapter = _checkpoint(
+        tmp_path,
+        _metadata(transformer_config_sha256=config_sha256, transformer_sha256=transformer_sha256),
+    )
     manifest = {
         "schema_version": 1,
         "adapter_file": adapter.name,
@@ -109,12 +116,17 @@ def test_reads_self_contained_stage1_package(tmp_path) -> None:
         "base_model_id": "example/ltx-2.5-mlx-q8",
         "base_revision": _REVISION,
         "transformer_file": transformer.name,
+        "transformer_sha256": transformer_sha256,
     }
     (tmp_path / "fast-stage1.json").write_text(json.dumps(manifest))
 
     package = read_fast_stage1_package(tmp_path)
     assert package.adapter_path == adapter
     assert package.transformer_path == transformer
+
+    transformer.write_bytes(b"different base")
+    with pytest.raises(ValueError, match="transformer content digest mismatch"):
+        read_fast_stage1_package(tmp_path)
 
 
 def test_rejects_stage1_artifact_digest_mismatch(tmp_path) -> None:

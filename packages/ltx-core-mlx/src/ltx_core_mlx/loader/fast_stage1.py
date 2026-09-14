@@ -11,6 +11,8 @@ from pathlib import Path
 
 from safetensors import safe_open
 
+from ltx_core_mlx.loader.integrity import transformer_sha256
+
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _IMMUTABLE_REVISION_RE = re.compile(r"[0-9a-f]{40,64}")
 
@@ -28,6 +30,7 @@ class FastStage1Contract:
     base_model_id: str
     base_revision: str
     transformer_file: str
+    transformer_sha256: str
     transformer_config_sha256: str
     pipeline_family: str
     runtime_contract_major: int
@@ -153,15 +156,22 @@ def read_fast_stage1_package(
     artifact_sha256 = manifest.get("adapter_sha256")
     if not isinstance(artifact_sha256, str):
         raise ValueError("fast stage-1 manifest is missing 'adapter_sha256'")
-    for key in ("base_model_id", "base_revision"):
+    for key in ("base_model_id", "base_revision", "transformer_sha256"):
         if not isinstance(manifest.get(key), str) or not manifest[key]:
             raise ValueError(f"fast stage-1 manifest is missing {key!r}")
+    manifest_transformer_sha256 = manifest["transformer_sha256"].lower()
+    if not _SHA256_RE.fullmatch(manifest_transformer_sha256):
+        raise ValueError("fast stage-1 manifest transformer_sha256 must be a lowercase SHA-256 digest")
+    actual_transformer_sha256 = transformer_sha256(transformer_path)
+    if manifest_transformer_sha256 != actual_transformer_sha256:
+        raise ValueError("fast stage-1 manifest transformer content digest mismatch")
 
     contract = read_fast_stage1_contract(
         adapter_path,
         base_model_id=manifest["base_model_id"],
         base_revision=manifest["base_revision"],
         transformer_file=transformer_path.name,
+        transformer_sha256=actual_transformer_sha256,
         transformer_config_sha256=_config_sha256(root),
         runtime_contract_major=runtime_contract_major,
         expected_artifact_sha256=artifact_sha256,
@@ -175,6 +185,7 @@ def read_fast_stage1_contract(
     base_model_id: str,
     base_revision: str,
     transformer_file: str,
+    transformer_sha256: str,
     transformer_config_sha256: str,
     runtime_contract_major: int = 1,
     expected_artifact_sha256: str | None = None,
@@ -219,17 +230,22 @@ def read_fast_stage1_contract(
         declared_model_id = _required(metadata, "base_model_id")
         declared_revision = _required(metadata, "base_revision").lower()
         declared_transformer = _required(metadata, "transformer_file")
+        declared_transformer_sha256 = _required(metadata, "transformer_sha256").lower()
         declared_config_sha256 = _required(metadata, "transformer_config_sha256").lower()
         if not _IMMUTABLE_REVISION_RE.fullmatch(declared_revision):
             raise ValueError("base_revision must be an immutable hexadecimal revision")
         if not _SHA256_RE.fullmatch(declared_config_sha256):
             raise ValueError("transformer_config_sha256 must be a lowercase SHA-256 digest")
+        if not _SHA256_RE.fullmatch(declared_transformer_sha256):
+            raise ValueError("transformer_sha256 must be a lowercase SHA-256 digest")
         if declared_model_id != base_model_id:
             raise ValueError("fast stage-1 base model identifier mismatch")
         if declared_revision != base_revision.lower():
             raise ValueError("fast stage-1 base revision mismatch")
         if declared_transformer != transformer_file:
             raise ValueError("fast stage-1 transformer filename mismatch")
+        if declared_transformer_sha256 != transformer_sha256.lower():
+            raise ValueError("fast stage-1 transformer content digest mismatch")
         if declared_config_sha256 != transformer_config_sha256.lower():
             raise ValueError("fast stage-1 transformer config fingerprint mismatch")
 
@@ -252,6 +268,7 @@ def read_fast_stage1_contract(
         declared_model_id,
         declared_revision,
         declared_transformer,
+        declared_transformer_sha256,
         declared_config_sha256,
         pipeline_family,
         declared_runtime_major,

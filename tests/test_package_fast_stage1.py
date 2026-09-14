@@ -79,6 +79,8 @@ def test_packages_selected_stage1_schedule(monkeypatch, tmp_path) -> None:
     assert json.loads(metadata["fast_stage1_schedule"]) == [1.0, 0.98125, 0.909375, 0.421875, 0.0]
     assert json.loads(metadata["fast_stage1_noise_step_indices"]) == [0, 3, 5, 7]
     assert metadata["transformer_config_sha256"] == hashlib.sha256(config.read_bytes()).hexdigest()
+    assert metadata["transformer_sha256"] == hashlib.sha256(transformer.read_bytes()).hexdigest()
 
     manifest = json.loads((output / "fast-stage1.json").read_text())
     assert manifest["adapter_sha256"] == hashlib.sha256(adapter.read_bytes()).hexdigest()
+    assert manifest["transformer_sha256"] == metadata["transformer_sha256"]

@@ -141,6 +141,7 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
                 stage1.transformer_path != stage2.transformer_path
                 or stage1.contract.base_model_id != stage2.contract.base_model_id
                 or stage1.contract.base_revision != stage2.contract.base_revision
+                or stage1.contract.transformer_sha256 != stage2.contract.transformer_sha256
                 or stage1.contract.transformer_config_sha256 != stage2.contract.transformer_config_sha256
             ):
                 raise ValueError("fast stage-1 and stage-2 packages target different base transformers")

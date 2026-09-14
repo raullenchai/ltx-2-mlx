@@ -12,6 +12,8 @@ from pathlib import Path
 from safetensors import safe_open
 from safetensors.numpy import load_file, save_file
 
+from ltx_core_mlx.loader.integrity import transformer_sha256
+
 _IMMUTABLE_REVISION_RE = re.compile(r"[0-9a-f]{40,64}")
 _START_SIGMA = 0.909375
 _PROGRESSIVE_TARGET_SIGMA = 0.421875
@@ -84,6 +86,7 @@ def main() -> int:
         base_model_id=args.base_model_id,
         base_revision=args.base_revision,
         transformer_file=args.transformer_file,
+        transformer_sha256=transformer_sha256(transformer),
         transformer_config_sha256=_sha256(_config_path(args.model_dir)),
         pipeline_family="distilled_two_stage_ltx25",
         runtime_contract_major="1",
@@ -101,6 +104,7 @@ def main() -> int:
         "base_model_id": args.base_model_id,
         "base_revision": args.base_revision,
         "transformer_file": args.transformer_file,
+        "transformer_sha256": output_metadata["transformer_sha256"],
     }
     manifest_path = args.output_dir / "fast-stage2.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")

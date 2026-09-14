@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 
 import numpy as np
@@ -81,4 +82,9 @@ def test_packages_terminal_stage2_checkpoint(tmp_path, monkeypatch) -> None:
     assert metadata["fast_stage2_capability"] == "ltx_stage2_terminal_v1"
     assert json.loads(metadata["fast_stage2_schedule"]) == [0.909375, 0.0]
     assert metadata["stage2_steps"] == "1"
-    assert json.loads((output / "fast-stage2.json").read_text())["schema_version"] == 1
+    assert metadata["transformer_sha256"] == hashlib.sha256(
+        (model / "transformer-distilled.safetensors").read_bytes()
+    ).hexdigest()
+    manifest = json.loads((output / "fast-stage2.json").read_text())
+    assert manifest["schema_version"] == 1
+    assert manifest["transformer_sha256"] == metadata["transformer_sha256"]
