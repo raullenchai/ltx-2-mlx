@@ -20,6 +20,10 @@ from ltx_trainer_mlx.training_strategies.base_strategy import (
     TrainingStrategy,
     TrainingStrategyConfigBase,
 )
+from ltx_trainer_mlx.training_strategies.stage1_transition_distill import (
+    Stage1TransitionDistillConfig,
+    Stage1TransitionDistillStrategy,
+)
 from ltx_trainer_mlx.training_strategies.stage2_terminal_distill import (
     Stage2TerminalDistillConfig,
     Stage2TerminalDistillStrategy,
@@ -36,13 +40,17 @@ from ltx_trainer_mlx.training_strategies.video_to_video import (
 logger = logging.getLogger(__name__)
 
 # Type alias for all strategy config types
-TrainingStrategyConfig = TextToVideoConfig | VideoToVideoConfig | Stage2TerminalDistillConfig
+TrainingStrategyConfig = (
+    TextToVideoConfig | VideoToVideoConfig | Stage1TransitionDistillConfig | Stage2TerminalDistillConfig
+)
 
 __all__ = [
     "DEFAULT_FPS",
     "VIDEO_SCALE_FACTORS",
     "ModalityInputs",
     "ModelInputs",
+    "Stage1TransitionDistillConfig",
+    "Stage1TransitionDistillStrategy",
     "Stage2TerminalDistillConfig",
     "Stage2TerminalDistillStrategy",
     "TextToVideoConfig",
@@ -74,7 +82,10 @@ def get_training_strategy(config: TrainingStrategyConfig | object) -> TrainingSt
         ValueError: If strategy name is not supported.
     """
     # Convert Pydantic TrainingStrategyConfig to native strategy config
-    if not isinstance(config, TextToVideoConfig | VideoToVideoConfig | Stage2TerminalDistillConfig):
+    if not isinstance(
+        config,
+        TextToVideoConfig | VideoToVideoConfig | Stage1TransitionDistillConfig | Stage2TerminalDistillConfig,
+    ):
         name = getattr(config, "name", None)
         generate_audio = getattr(config, "generate_audio", False)
         if name == "text_to_video":
@@ -108,6 +119,18 @@ def get_training_strategy(config: TrainingStrategyConfig | object) -> TrainingSt
                 video_loss_weight=getattr(config, "video_loss_weight", 1.0),
                 audio_loss_weight=getattr(config, "audio_loss_weight", 1.0),
             )
+        elif name == "stage1_transition_distill":
+            config = Stage1TransitionDistillConfig(
+                sigma=config.sigma,
+                target_sigma=config.target_sigma,
+                video_start_latents_dir=config.video_start_latents_dir,
+                video_terminal_latents_dir=config.video_terminal_latents_dir,
+                audio_start_latents_dir=config.audio_start_latents_dir,
+                audio_terminal_latents_dir=config.audio_terminal_latents_dir,
+                conditions_dir=getattr(config, "conditions_dir", "stage1_conditions"),
+                video_loss_weight=getattr(config, "video_loss_weight", 1.0),
+                audio_loss_weight=getattr(config, "audio_loss_weight", 1.0),
+            )
         else:
             raise ValueError(f"Unknown training strategy name: {name}")
 
@@ -116,6 +139,8 @@ def get_training_strategy(config: TrainingStrategyConfig | object) -> TrainingSt
             strategy = TextToVideoStrategy(config)
         case VideoToVideoConfig():
             strategy = VideoToVideoStrategy(config)
+        case Stage1TransitionDistillConfig():
+            strategy = Stage1TransitionDistillStrategy(config)
         case Stage2TerminalDistillConfig():
             strategy = Stage2TerminalDistillStrategy(config)
         case _:

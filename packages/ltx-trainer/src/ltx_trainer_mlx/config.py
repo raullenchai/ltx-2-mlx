@@ -440,7 +440,7 @@ class TrainingStrategyConfig(ConfigBaseModel):
     when video-to-video and other strategies are ported.
     """
 
-    name: Literal["text_to_video", "video_to_video", "stage2_terminal_distill"] = Field(
+    name: Literal["text_to_video", "video_to_video", "stage1_transition_distill", "stage2_terminal_distill"] = Field(
         default="text_to_video",
         description="Training strategy name.",
     )
@@ -466,12 +466,13 @@ class TrainingStrategyConfig(ConfigBaseModel):
     video_terminal_latents_dir: str = "stage2_video_terminal_latents"
     audio_start_latents_dir: str = "stage2_audio_start_latents"
     audio_terminal_latents_dir: str = "stage2_audio_terminal_latents"
+    conditions_dir: str = "conditions"
     video_loss_weight: float = Field(default=1.0, ge=0)
     audio_loss_weight: float = Field(default=1.0, ge=0)
 
     @model_validator(mode="after")
     def validate_distillation_weights(self) -> "TrainingStrategyConfig":
-        if self.name == "stage2_terminal_distill":
+        if self.name in ("stage1_transition_distill", "stage2_terminal_distill"):
             if self.target_sigma >= self.sigma:
                 raise ValueError("target_sigma must be less than sigma")
             if self.video_loss_weight == 0 and self.audio_loss_weight == 0:

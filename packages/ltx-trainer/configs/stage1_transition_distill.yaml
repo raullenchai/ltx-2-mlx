@@ -1,0 +1,63 @@
+# Research pilot for one compressed LTX-2.5 ancestral stage-1 transition.
+# This first probe learns teacher boundaries 6 -> 8 (0.725 -> 0), replacing
+# two teacher evaluations with one deterministic student evaluation. It is a
+# capacity/quality experiment, not a product schedule: stochastic distribution
+# matching must be evaluated before composing all four 8 -> 4 transitions.
+
+model:
+  model_path: ~/.cache/huggingface/hub/models--MrMofer--ltx-2.5-mlx-q8/snapshots/latest
+  transformer_file: transformer-distilled.safetensors
+  training_mode: lora
+
+lora:
+  rank: 8
+  alpha: 8
+  dropout: 0.0
+  target_modules:
+    - to_q
+    - to_k
+    - to_v
+
+optimization:
+  learning_rate: 5.0e-5
+  steps: 100
+  batch_size: 1
+  gradient_accumulation_steps: 1
+  max_grad_norm: 1.0
+  weight_decay: 0.0
+  enable_gradient_checkpointing: true
+  scheduler_type: linear
+  scheduler_params:
+    start_factor: 1.0
+    end_factor: 0.2
+
+data:
+  preprocessed_data_root: ./stage1-trajectories
+
+training_strategy:
+  name: stage1_transition_distill
+  sigma: 0.725
+  target_sigma: 0.0
+  video_start_latents_dir: stage1_video_step_06
+  video_terminal_latents_dir: stage1_video_step_08
+  audio_start_latents_dir: stage1_audio_step_06
+  audio_terminal_latents_dir: stage1_audio_step_08
+  conditions_dir: stage1_conditions
+  video_loss_weight: 1.0
+  audio_loss_weight: 1.0
+
+flow_matching:
+  timestep_sampling_mode: uniform
+
+validation:
+  prompts: []
+  interval: null
+  generate_audio: true
+
+checkpoints:
+  interval: 20
+  keep_last_n: 5
+  precision: bfloat16
+
+seed: 42
+output_dir: ./outputs/stage1_transition_distill
