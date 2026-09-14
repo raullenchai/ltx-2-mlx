@@ -51,6 +51,12 @@ accumulated approximation error and preserve diversity, while excessive noise
 can destabilize training. It remains experimental until decoded multi-seed
 qualification passes.
 
+A 30-iteration materialized microbenchmark on an M3 Ultra Studio with MLX
+0.32.0 used video/audio noise shapes `(1, 3072, 128)` and `(1, 126, 128)`.
+Legacy one-lane generation averaged 0.407 ms and the three-lane `0 -> 3` span
+averaged 0.592 ms, a 0.185 ms delta. This isolates coupling overhead; it is not
+an end-to-end speed result.
+
 Evaluate either checkpoint against prompt-disjoint trajectories:
 
 ```bash
