@@ -56,6 +56,21 @@ def _seed_training_rng(seed: int) -> None:
     random.seed(seed)
 
 
+def _normalize_lora_checkpoint_weights(weights: dict[str, mx.array]) -> dict[str, mx.array]:
+    """Convert saved diffusers-style LoRA tensors back to MLX module keys."""
+    normalized: dict[str, mx.array] = {}
+    for raw_key, value in weights.items():
+        key = raw_key.removeprefix("diffusion_model.")
+        if key.endswith(".lora_A.weight"):
+            normalized[key[: -len(".lora_A.weight")] + ".lora_a"] = mx.transpose(value)
+        elif key.endswith(".lora_B.weight"):
+            normalized[key[: -len(".lora_B.weight")] + ".lora_b"] = mx.transpose(value)
+        elif key.endswith((".lora_a", ".lora_b")):
+            # Retain support for early native-MLX checkpoints.
+            normalized[key] = value
+    return normalized
+
+
 def _materialize(x: Any) -> None:
     """Force MLX lazy compute graph to materialise.
 
@@ -584,15 +599,12 @@ class LtxvTrainer:
         weights = mx.load(str(checkpoint_path))
 
         if self._config.model.training_mode == "lora":
-            # Filter to LoRA weights only and strip prefix
-            lora_weights = {}
-            for k, v in weights.items():
-                k = k.replace("diffusion_model.", "", 1)
-                if "lora_a" in k or "lora_b" in k:
-                    lora_weights[k] = v
+            lora_weights = _normalize_lora_checkpoint_weights(weights)
             if lora_weights:
                 self._transformer.load_weights(list(lora_weights.items()), strict=False)
                 logger.info("LoRA checkpoint loaded successfully")
+            else:
+                raise ValueError(f"LoRA checkpoint contains no compatible adapter weights: {checkpoint_path}")
         else:
             self._transformer.load_weights(list(weights.items()), strict=True)
             logger.info("Full model checkpoint loaded successfully")

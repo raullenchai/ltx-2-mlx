@@ -31,6 +31,28 @@ def test_training_seed_covers_python_data_shuffle() -> None:
 
     assert first == second
 
+
+def test_saved_lora_weights_normalize_back_to_mlx_layout() -> None:
+    """Diffusers checkpoint names and transposes must round-trip on resume."""
+    from ltx_trainer_mlx.trainer import _normalize_lora_checkpoint_weights
+
+    saved_a = mx.arange(3 * 5).reshape(3, 5)
+    saved_b = mx.arange(7 * 3).reshape(7, 3)
+    normalized = _normalize_lora_checkpoint_weights(
+        {
+            "diffusion_model.blocks.0.to_q.lora_A.weight": saved_a,
+            "diffusion_model.blocks.0.to_q.lora_B.weight": saved_b,
+            "diffusion_model.blocks.0.to_q.linear.weight": mx.zeros((7, 5)),
+        }
+    )
+
+    assert set(normalized) == {
+        "blocks.0.to_q.lora_a",
+        "blocks.0.to_q.lora_b",
+    }
+    assert mx.array_equal(normalized["blocks.0.to_q.lora_a"], mx.transpose(saved_a)).item()
+    assert mx.array_equal(normalized["blocks.0.to_q.lora_b"], mx.transpose(saved_b)).item()
+
 # ---------------------------------------------------------------------------
 # 1. TestStrategyFactory
 # ---------------------------------------------------------------------------
