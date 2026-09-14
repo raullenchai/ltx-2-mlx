@@ -58,8 +58,12 @@ fail-closed supervisor passed 420/630/700 file milestones. Split views contain
 archived at
 `/Volumes/RTL-2T/datasets/ltx-stage2-distillation/progressive-scale-2026-09-14/`.
 
-A 200-step rank-8 Q/K/V mixed-bucket run is active against `splits/train`,
-writing checkpoints every 20 steps under `output-rank8`. After it completes,
-evaluate all checkpoints on `splits/validation`, select by the joint latent
-and decoded quality gate, and archive only the selected adapter. Never use
-validation prompts for optimization.
+A shuffled mixed-shape process was OS-terminated before checkpoint without a
+Python traceback, consistent with compiled graph/allocation accumulation. The
+replacement curriculum uses separate processes: 100 steps at 468, 50 at 1536,
+and 16 at 3072 tokens, with checkpoint handoff and descending learning rates.
+The 468 stage is stable through step 5 at 12.63 seconds/step and loss `0.1746`.
+`/private/tmp/LTX-training-curriculum-supervisor.sh` requires each final
+checkpoint before advancing. After completion, evaluate all stage checkpoints
+on the matching validation bucket and the final checkpoint across all 20
+items. Never use validation prompts for optimization.
