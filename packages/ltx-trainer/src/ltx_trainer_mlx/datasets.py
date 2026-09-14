@@ -181,6 +181,7 @@ class PrecomputedDataset:
         data_files: list[Path] = []
         for ext in ("*.safetensors", "*.npz", "*.npy"):
             data_files.extend(data_path.glob(f"**/{ext}"))
+        data_files.sort(key=lambda path: path.relative_to(data_path).as_posix())
 
         if not data_files:
             raise ValueError(f"No data files found in {data_path}")

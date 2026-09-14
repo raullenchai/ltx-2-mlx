@@ -185,6 +185,28 @@ class TestPrecomputedDataset:
         assert sample["latent_conditions"]["latents"].shape == (C, F, H, W)
         assert "video_prompt_embeds" in sample["text_conditions"]
 
+    def test_sample_discovery_is_filename_deterministic(self, tmp_path):
+        """Creation/glob order must not change sample indices across processes."""
+        from ltx_trainer_mlx.datasets import PrecomputedDataset
+
+        latents_dir = tmp_path / "latents"
+        conditions_dir = tmp_path / "conditions"
+        latents_dir.mkdir()
+        conditions_dir.mkdir()
+        for index in (9, 1, 5):
+            self._make_sample(latents_dir, "latent", index)
+            save_file(
+                {"video_prompt_embeds": np.zeros((2, 4), dtype=np.float32)},
+                str(conditions_dir / f"condition_{index:04d}.safetensors"),
+            )
+
+        dataset = PrecomputedDataset(str(tmp_path))
+        assert [path.name for path in dataset.sample_files["latent_conditions"]] == [
+            "latent_0001.safetensors",
+            "latent_0005.safetensors",
+            "latent_0009.safetensors",
+        ]
+
 
 # ---------------------------------------------------------------------------
 # DummyDataset

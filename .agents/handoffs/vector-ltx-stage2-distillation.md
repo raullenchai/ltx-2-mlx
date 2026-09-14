@@ -176,6 +176,17 @@ index, and anonymous metrics were copied to
 files or hidden mapping were copied. Human judgments are still required before
 revealing the mapping or calling the ten-case suite a pass.
 
+Post-render contact-sheet inspection found that the first review index was
+wrong: `PrecomputedDataset` preserved filesystem glob order while the blind
+runner labeled cases from a separately filename-sorted list. Teacher/student
+pairs and their anonymous metrics were internally valid, but prompt/stress
+labels were permuted. Dataset discovery is now sorted by relative filename,
+and the blind runner derives both render positions and review prompts from the
+same validated `PrecomputedDataset` ordering. The already-rendered progressive
+suite did not need a costly rerender; its review index was corrected from the
+exact pre-fix dataset order. The original incorrect index is retained as a
+scratch backup. Do not use it. Full-suite coverage is `700 passed, 22 skipped`.
+
 `scripts/run_stage1_compressed_qualification.py` now provides the next
 fail-closed supervisor stage. It advances from the first noise-coupled pilot
 only when both mean video and audio MSE improve by at least 10% and no held-out

@@ -13,13 +13,18 @@ from pathlib import Path
 
 from safetensors import safe_open
 
+from ltx_trainer_mlx.datasets import PrecomputedDataset
+from ltx_trainer_mlx.training_strategies.stage2_terminal_distill import (
+    Stage2TerminalDistillConfig,
+    Stage2TerminalDistillStrategy,
+)
+
 
 def _run(command: list[str]) -> None:
     subprocess.run(command, check=True)
 
 
-def _review_case(start: Path, output_dir: Path) -> dict[str, object]:
-    index = int(start.stem.removeprefix("latent_"))
+def _review_case(start: Path, index: int, output_dir: Path) -> dict[str, object]:
     with safe_open(start, framework="numpy") as checkpoint:
         prompt = (checkpoint.metadata() or {}).get("prompt", "")
     case = output_dir / f"case-{index:02d}"
@@ -37,6 +42,33 @@ def _review_case(start: Path, output_dir: Path) -> dict[str, object]:
     }
 
 
+def _qualification_starts(data: Path, metadata: dict[str, str]) -> list[Path]:
+    target_sigma = float(metadata.get("stage2_target_sigma", "0"))
+    strategy = Stage2TerminalDistillStrategy(
+        Stage2TerminalDistillConfig(
+            sigma=float(metadata["stage2_sigma"]),
+            target_sigma=target_sigma,
+            video_terminal_latents_dir=metadata.get(
+                "stage2_video_target_latents_dir",
+                "stage2_video_terminal_latents",
+            ),
+            audio_terminal_latents_dir=metadata.get(
+                "stage2_audio_target_latents_dir",
+                "stage2_audio_terminal_latents",
+            ),
+        )
+    )
+    data_sources = strategy.get_data_sources()
+    if target_sigma > 0:
+        data_sources |= {
+            "stage2_video_terminal_latents": "video_teacher_terminal",
+            "stage2_audio_terminal_latents": "audio_teacher_terminal",
+        }
+    dataset = PrecomputedDataset(str(data), data_sources=data_sources)
+    source_dir = dataset.source_paths[strategy.config.video_start_latents_dir]
+    return [source_dir / relative for relative in dataset.sample_files["video_start"]]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True)
@@ -48,7 +80,9 @@ def main() -> int:
     parser.add_argument("--limit", type=int)
     args = parser.parse_args()
 
-    starts = sorted((args.data / ".precomputed" / "stage2_video_start_latents").glob("latent_*.safetensors"))
+    with safe_open(args.checkpoint, framework="numpy") as checkpoint:
+        metadata = checkpoint.metadata() or {}
+    starts = _qualification_starts(args.data, metadata)
     if args.limit is not None:
         starts = starts[: args.limit]
     if not starts:
@@ -61,7 +95,7 @@ def main() -> int:
     review_cases = []
 
     for progress, start in enumerate(starts, start=1):
-        index = int(start.stem.removeprefix("latent_"))
+        index = progress - 1
         case = args.output_dir / f"case-{index:02d}"
         case.mkdir(parents=True, exist_ok=True)
         side_by_side = case / "AB-side-by-side-muted.mp4"
@@ -118,7 +152,7 @@ def main() -> int:
                 ]
             )
         print(f"rendered blind case {progress}/{len(starts)} (index {index})", flush=True)
-        review_cases.append(_review_case(start, args.output_dir))
+        review_cases.append(_review_case(start, index, args.output_dir))
 
     (args.output_dir / ".blind-mapping.json").write_text(json.dumps(mapping, indent=2, sort_keys=True) + "\n")
     review_index = {
