@@ -193,3 +193,23 @@ only when both mean video and audio MSE improve by at least 10% and no held-out
 sample regresses by more than 5%; passing this gate starts the full curriculum
 and its four-transition evaluation. This gate authorizes compute only, not
 product acceptance. The full suite is `699 passed, 22 skipped`.
+
+## Terminal scale candidate (2026-09-14)
+
+The terminal `3 -> 1` curriculum completed its 468/1536/3072-token phases and
+a 24-step low-learning-rate replay without OOM. Replay took 10.7 minutes and
+peaked at 19.79 GiB. On the prompt-disjoint 20-item held-out set, the final
+checkpoint reduced mean video latent MSE by 23.1% and audio latent MSE by
+74.7% versus the unadapted one-step baseline. All 20 paired items improved in
+both modalities; the smallest video improvement was 5.2%. These are latent
+diagnostics only, not decoded non-inferiority evidence.
+
+A diagnostic package was built and successfully reopened by the real
+fail-closed loader. It declares `ltx_stage2_terminal_v1`, schedule
+`[0.909375, 0.0]`, runtime contract major 1, immutable base revision
+`f1b56e7dc89f71a9af2cddac787b89ed22a8b7fc`, and qualification revision
+`diagnostic-terminal-20260914`. Its adapter SHA-256 is
+`6e8de0813b3731e1be5ccb66170e219bc1f6395052702a04f3a141cd98d749f1`.
+The diagnostic qualification label deliberately prevents treating this as a
+release-qualified artifact. A new 10-case 768x512 decoded blind suite is now
+rendering; keep the hidden mapping out of the reviewer bundle.
