@@ -22,12 +22,15 @@ For dev model + CFG quality, see :class:`TI2VidTwoStagesPipeline` /
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 import mlx.core as mx
 
 from ltx_core_mlx.components.patchifiers import compute_video_latent_shape
-from ltx_core_mlx.model.transformer.model import X0Model
+from ltx_core_mlx.conditioning.types.latent_cond import LatentState
+from ltx_core_mlx.loader.fast_stage2 import FastStage2Package, read_fast_stage2_package
+from ltx_core_mlx.model.transformer.model import LTXModel, X0Model
 from ltx_core_mlx.utils.memory import aggressive_cleanup
 from ltx_core_mlx.utils.positions import (
     compute_audio_positions,
@@ -40,7 +43,7 @@ from .ti2vid_two_stages import TI2VidTwoStagesPipeline
 from .utils._orchestration import detect_model_version
 from .utils.helpers import create_noised_state
 from .utils.progress import phase
-from .utils.samplers import ancestral_denoise_loop, denoise_loop
+from .utils.samplers import DenoiseOutput, ancestral_denoise_loop, denoise_loop
 
 _materialize = getattr(mx, "eval")  # noqa: B009 -- security hook flags mx.eval pattern
 
@@ -94,6 +97,9 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
         low_memory: Aggressive memory management.
         low_ram_streaming: Stream transformer blocks from disk.
         tile_count: Optional modality tiling configuration.
+        fast_stage2_manifest: Optional schema-v1 manifest filename inside the
+            model directory. Enabling it validates and runs the portable
+            learned first stage-2 transition before a clean-base correction.
     """
 
     def __init__(
@@ -103,6 +109,7 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
         low_memory: bool = True,
         low_ram_streaming: bool = False,
         tile_count=None,
+        fast_stage2_manifest: str | None = None,
     ):
         super().__init__(
             model_dir,
@@ -115,6 +122,17 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
         # LTX-2.5 checkpoints sample stage 1 with the ancestral (SDE) Euler
         # sampler; the 2.3 port keeps the deterministic Euler loop.
         self.use_ancestral_sampler = should_use_ancestral_sampler(self.model_dir)
+        self._fast_stage2_package: FastStage2Package | None = None
+        if fast_stage2_manifest is not None:
+            self._fast_stage2_package = read_fast_stage2_package(self.model_dir, fast_stage2_manifest)
+
+    def _distilled_transformer_path(self) -> Path:
+        if self._fast_stage2_package is not None:
+            return self._fast_stage2_package.transformer_path
+        transformer_path = self.model_dir / "transformer.safetensors"
+        if not transformer_path.exists():
+            transformer_path = self._resolve_safetensors(self.model_dir, "transformer-distilled")
+        return transformer_path
 
     def load(self) -> None:
         """Load distilled DiT + VAE encoder + upsampler (skip decoders).
@@ -130,10 +148,7 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
             return
 
         if self.dit is None:
-            transformer_path = self.model_dir / "transformer.safetensors"
-            if not transformer_path.exists():
-                transformer_path = self._resolve_safetensors(self.model_dir, "transformer-distilled")
-            self.dit = self._load_transformer_with_optional_streaming(transformer_path)
+            self.dit = self._load_transformer_with_optional_streaming(self._distilled_transformer_path())
 
         self._load_vae_encoder()
 
@@ -141,6 +156,71 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
             self._load_upsampler()
 
         self._loaded = True
+
+    def _stage2_model(self, dit: LTXModel, latent_shape: tuple[int, int, int]) -> X0Model:
+        if self._tile_count is None:
+            return X0Model(dit)
+
+        from ltx_core_mlx.components.modality_tiling import TiledLTXModel, VideoModalityTiler
+
+        return X0Model(TiledLTXModel(dit, VideoModalityTiler(self._tile_count, latent_shape=latent_shape)))
+
+    def _run_fast_stage2(
+        self,
+        video_state: LatentState,
+        audio_state: LatentState,
+        video_embeds: mx.array,
+        audio_embeds: mx.array,
+        *,
+        latent_shape: tuple[int, int, int],
+    ) -> DenoiseOutput:
+        """Run the learned first transition, then reload base for correction."""
+        package = self._fast_stage2_package
+        assert package is not None
+        strength = package.contract.lora_alpha / package.contract.lora_rank
+        schedule = list(package.contract.schedule)
+
+        self.dit = None
+        aggressive_cleanup()
+        try:
+            self._pending_loras = [(str(package.adapter_path), strength)]
+            try:
+                self.dit = self._load_transformer_with_optional_streaming(package.transformer_path)
+            finally:
+                del self._pending_loras
+
+            student_model = self._stage2_model(self.dit, latent_shape)
+            learned = denoise_loop(
+                model=student_model,
+                video_state=video_state,
+                audio_state=audio_state,
+                video_text_embeds=video_embeds,
+                audio_text_embeds=audio_embeds,
+                sigmas=schedule[:2],
+            )
+            # Finish the adapter-backed graph before releasing its weights.
+            _materialize(learned.video_latent, learned.audio_latent)
+            del student_model
+            self.dit = None
+            aggressive_cleanup()
+
+            self.dit = self._load_transformer_with_optional_streaming(package.transformer_path)
+            correction_model = self._stage2_model(self.dit, latent_shape)
+            corrected = denoise_loop(
+                model=correction_model,
+                video_state=replace(video_state, latent=learned.video_latent),
+                audio_state=replace(audio_state, latent=learned.audio_latent),
+                video_text_embeds=video_embeds,
+                audio_text_embeds=audio_embeds,
+                sigmas=schedule[1:],
+            )
+            del correction_model
+            return corrected
+        except Exception:
+            self.dit = None
+            self._loaded = False
+            aggressive_cleanup()
+            raise
 
     def generate_two_stage(  # type: ignore[override]
         self,
@@ -179,6 +259,14 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
         Returns:
             Tuple of (video_latent, audio_latent) at full resolution.
         """
+        if self._fast_stage2_package is not None:
+            if stage2_steps is not None:
+                raise ValueError("fast stage 2 uses its qualified schedule and cannot override stage2_steps")
+            if stage2_trajectory_callback is not None:
+                raise ValueError("fast stage 2 cannot capture a standard teacher trajectory")
+            if getattr(self, "_pending_loras", None):
+                raise ValueError("fast stage 2 v1 cannot be combined with additional LoRAs")
+
         # --- Text encoding (positive only — no CFG) ---
         self._load_text_encoder()
         with phase("Encoding prompt", verbose=self.verbose):
@@ -327,6 +415,8 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
         # remove freshly injected noise (upstream-verbatim).
         video_tokens, _ = self.video_patchifier.patchify(video_upscaled)
         sigmas_2 = STAGE_2_SIGMAS[: stage2_steps + 1] if stage2_steps else STAGE_2_SIGMAS
+        if self._fast_stage2_package is not None:
+            sigmas_2 = list(self._fast_stage2_package.contract.schedule)
         start_sigma = sigmas_2[0]
 
         video_positions_2 = compute_video_positions(F, H_full, W_full, frame_rate=frame_rate)
@@ -353,13 +443,6 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
             initial_latent=audio_tokens_1,
         )
 
-        stage2_x0_model = x0_model
-        if self._tile_count is not None:
-            from ltx_core_mlx.components.modality_tiling import TiledLTXModel, VideoModalityTiler
-
-            tiler_2 = VideoModalityTiler(self._tile_count, latent_shape=(F, H_full, W_full))
-            stage2_x0_model = X0Model(TiledLTXModel(self.dit, tiler_2))
-
         self._pre_denoise_flush(video_state_2, audio_state_2)
         intermediate: dict[str, object] = {}
 
@@ -367,15 +450,27 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
             if abs(sigma_next - STAGE_2_SIGMAS[-2]) < 1e-9:
                 intermediate.update(sigma=sigma_next, video=video, audio=audio)
 
-        output_2 = denoise_loop(
-            model=stage2_x0_model,
-            video_state=video_state_2,
-            audio_state=audio_state_2,
-            video_text_embeds=video_embeds,
-            audio_text_embeds=audio_embeds,
-            sigmas=sigmas_2,
-            step_callback=capture_intermediate if stage2_trajectory_callback is not None else None,
-        )
+        if self._fast_stage2_package is not None:
+            # Drop every Stage-1 model reference before loading the student.
+            del stage1_dit, x0_model
+            output_2 = self._run_fast_stage2(
+                video_state_2,
+                audio_state_2,
+                video_embeds,
+                audio_embeds,
+                latent_shape=(F, H_full, W_full),
+            )
+        else:
+            stage2_x0_model = self._stage2_model(self.dit, (F, H_full, W_full))
+            output_2 = denoise_loop(
+                model=stage2_x0_model,
+                video_state=video_state_2,
+                audio_state=audio_state_2,
+                video_text_embeds=video_embeds,
+                audio_text_embeds=audio_embeds,
+                sigmas=sigmas_2,
+                step_callback=capture_intermediate if stage2_trajectory_callback is not None else None,
+            )
         if stage2_trajectory_callback is not None:
             if len(sigmas_2) == len(STAGE_2_SIGMAS) and not intermediate:
                 raise RuntimeError("full stage-2 trajectory did not capture the penultimate sigma")

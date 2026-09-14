@@ -31,6 +31,16 @@ class FastStage2Contract:
     qualification_revision: str
 
 
+@dataclass(frozen=True)
+class FastStage2Package:
+    """A validated adapter and the exact base transformer it extends."""
+
+    adapter_path: Path
+    transformer_path: Path
+    artifact_sha256: str
+    contract: FastStage2Contract
+
+
 def _required(metadata: dict[str, str], key: str) -> str:
     value = metadata.get(key, "").strip()
     if not value:
@@ -83,6 +93,75 @@ def _file_sha256(path: Path) -> str:
         for chunk in iter(lambda: checkpoint.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _config_sha256(model_dir: Path) -> str:
+    for name in ("embedded_config.json", "config.json"):
+        path = model_dir / name
+        if path.is_file():
+            return _file_sha256(path)
+    raise ValueError("fast stage-2 requires embedded_config.json or config.json")
+
+
+def _package_file(model_dir: Path, value: object, key: str, *, suffix: str) -> Path:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"fast stage-2 manifest is missing {key!r}")
+    relative = Path(value)
+    if relative.is_absolute() or len(relative.parts) != 1 or relative.suffix != suffix:
+        raise ValueError(f"fast stage-2 manifest {key!r} must name one local {suffix} file")
+    path = model_dir / relative
+    if not path.is_file():
+        raise FileNotFoundError(f"fast stage-2 package file not found: {path}")
+    return path
+
+
+def read_fast_stage2_package(
+    model_dir: str | Path,
+    manifest_name: str = "fast-stage2.json",
+    *,
+    runtime_contract_major: int = 1,
+) -> FastStage2Package:
+    """Read and validate a self-contained fast-stage package from a model revision."""
+    root = Path(model_dir)
+    manifest_path = _package_file(root, manifest_name, "manifest_name", suffix=".json")
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError("fast stage-2 manifest must be valid JSON") from exc
+    if not isinstance(manifest, dict) or manifest.get("schema_version") != 1:
+        raise ValueError("fast stage-2 manifest requires schema_version=1")
+
+    adapter_path = _package_file(root, manifest.get("adapter_file"), "adapter_file", suffix=".safetensors")
+    transformer_path = _package_file(
+        root,
+        manifest.get("transformer_file"),
+        "transformer_file",
+        suffix=".safetensors",
+    )
+    artifact_sha256 = manifest.get("adapter_sha256")
+    if not isinstance(artifact_sha256, str):
+        raise ValueError("fast stage-2 manifest is missing 'adapter_sha256'")
+
+    string_fields = ("base_model_id", "base_revision")
+    for key in string_fields:
+        if not isinstance(manifest.get(key), str) or not manifest[key]:
+            raise ValueError(f"fast stage-2 manifest is missing {key!r}")
+
+    contract = read_fast_stage2_contract(
+        adapter_path,
+        base_model_id=manifest["base_model_id"],
+        base_revision=manifest["base_revision"],
+        transformer_file=transformer_path.name,
+        transformer_config_sha256=_config_sha256(root),
+        runtime_contract_major=runtime_contract_major,
+        expected_artifact_sha256=artifact_sha256,
+    )
+    return FastStage2Package(
+        adapter_path=adapter_path,
+        transformer_path=transformer_path,
+        artifact_sha256=artifact_sha256,
+        contract=contract,
+    )
 
 
 def read_fast_stage2_contract(

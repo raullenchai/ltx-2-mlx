@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from safetensors.numpy import save_file
 
-from ltx_core_mlx.loader.fast_stage2 import read_fast_stage2_contract
+from ltx_core_mlx.loader.fast_stage2 import read_fast_stage2_contract, read_fast_stage2_package
 
 _REVISION = "a" * 40
 _CONFIG_SHA256 = "b" * 64
@@ -113,3 +113,57 @@ def test_rejects_incomplete_or_wrong_rank_lora_pairs(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="does not match declared rank"):
         _read(_checkpoint(tmp_path, _metadata(lora_rank="4")))
+
+
+def test_reads_self_contained_fast_stage2_package(tmp_path) -> None:
+    config = tmp_path / "embedded_config.json"
+    config.write_text('{"transformer":{"model_version":"2.5.0"}}')
+    config_sha256 = hashlib.sha256(config.read_bytes()).hexdigest()
+    adapter = _checkpoint(tmp_path, _metadata(transformer_config_sha256=config_sha256))
+    transformer = tmp_path / "transformer-distilled.safetensors"
+    transformer.write_bytes(b"base placeholder")
+    manifest = {
+        "schema_version": 1,
+        "adapter_file": adapter.name,
+        "adapter_sha256": hashlib.sha256(adapter.read_bytes()).hexdigest(),
+        "base_model_id": "example/ltx-2.5-mlx-q8",
+        "base_revision": _REVISION,
+        "transformer_file": transformer.name,
+    }
+    (tmp_path / "fast-stage2.json").write_text(json.dumps(manifest))
+
+    package = read_fast_stage2_package(tmp_path)
+
+    assert package.adapter_path == adapter
+    assert package.transformer_path == transformer
+    assert package.contract.schedule == (0.909375, 0.421875, 0.0)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "match"),
+    [
+        ("schema_version", 2, "schema_version=1"),
+        ("adapter_file", "../adapter.safetensors", "one local .safetensors"),
+        ("transformer_file", "/tmp/base.safetensors", "one local .safetensors"),
+    ],
+)
+def test_rejects_invalid_fast_stage2_package_paths(tmp_path, field, value, match) -> None:
+    config = tmp_path / "config.json"
+    config.write_text("{}")
+    config_sha256 = hashlib.sha256(config.read_bytes()).hexdigest()
+    adapter = _checkpoint(tmp_path, _metadata(transformer_config_sha256=config_sha256))
+    transformer = tmp_path / "transformer-distilled.safetensors"
+    transformer.write_bytes(b"base placeholder")
+    manifest = {
+        "schema_version": 1,
+        "adapter_file": adapter.name,
+        "adapter_sha256": hashlib.sha256(adapter.read_bytes()).hexdigest(),
+        "base_model_id": "example/ltx-2.5-mlx-q8",
+        "base_revision": _REVISION,
+        "transformer_file": transformer.name,
+        field: value,
+    }
+    (tmp_path / "fast-stage2.json").write_text(json.dumps(manifest))
+
+    with pytest.raises((ValueError, FileNotFoundError), match=match):
+        read_fast_stage2_package(tmp_path)
