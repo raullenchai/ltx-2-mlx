@@ -223,6 +223,27 @@ class TestAncestralDenoiseLoop:
         assert out.video_latent.dtype == mx.bfloat16
         assert out.audio_latent.dtype == mx.bfloat16
 
+    def test_step_callback_observes_every_completed_transition(self):
+        observed = []
+        video_state = _state((1, 8, 4), 12)
+        audio_state = _state((1, 4, 4), 13)
+        out = ancestral_denoise_loop(
+            model=_FakeModel(),
+            video_state=video_state,
+            audio_state=audio_state,
+            video_text_embeds=mx.zeros((1, 2, 4)),
+            audio_text_embeds=mx.zeros((1, 2, 4)),
+            sigmas=[1.0, 0.5, 0.0],
+            show_progress=False,
+            noise_seed=10012,
+            step_callback=lambda sigma, video, audio: observed.append((sigma, video, audio)),
+        )
+        mx.eval(out.video_latent, out.audio_latent)
+
+        assert [item[0] for item in observed] == [0.5, 0.0]
+        assert mx.array_equal(observed[-1][1], out.video_latent).item()
+        assert mx.array_equal(observed[-1][2], out.audio_latent).item()
+
 
 # ---------------------------------------------------------------------------
 # DistilledPipeline stage-1 sampler selection

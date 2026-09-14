@@ -270,6 +270,7 @@ def ancestral_denoise_loop(
     noise_seed: int = -1,
     eta: float = 1.0,
     s_noise: float = 1.0,
+    step_callback: Callable[[float, mx.array, mx.array], None] | None = None,
 ) -> DenoiseOutput:
     """Run the ancestral (SDE) Euler denoising loop for joint audio+video.
 
@@ -310,6 +311,8 @@ def ancestral_denoise_loop(
             ``ANCESTRAL_NOISE_SEED_OFFSET`` in the distilled wiring).
         eta: Stochastic noise injection strength (0=deterministic, 1=maximum).
         s_noise: Noise multiplier for the injected term.
+        step_callback: Optional research hook called after each completed
+            transition with ``(sigma_next, video_latent, audio_latent)``.
 
     Returns:
         DenoiseOutput with final video and audio latents.
@@ -377,6 +380,8 @@ def ancestral_denoise_loop(
             video_x = video_x0.astype(mx.bfloat16)
             audio_x = audio_x0.astype(mx.bfloat16)
             mx.async_eval(video_x, audio_x)
+            if step_callback is not None:
+                step_callback(sigma_next, video_x, audio_x)
             break
 
         # Fresh noise per step: bfloat16 (the latent state's dtype) like the
@@ -416,6 +421,8 @@ def ancestral_denoise_loop(
 
         # Force computation for memory efficiency.
         mx.async_eval(video_x, audio_x)
+        if step_callback is not None:
+            step_callback(sigma_next, video_x, audio_x)
 
     aggressive_cleanup()
 

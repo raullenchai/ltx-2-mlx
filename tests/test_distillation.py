@@ -16,7 +16,7 @@ from ltx_trainer_mlx.training_strategies.stage2_terminal_distill import (
     Stage2TerminalDistillConfig,
     Stage2TerminalDistillStrategy,
 )
-from ltx_trainer_mlx.trajectory import save_stage2_trajectory
+from ltx_trainer_mlx.trajectory import save_stage1_trajectory_step, save_stage2_trajectory
 
 
 class _Adapter(nn.Module):
@@ -216,6 +216,41 @@ def test_stage2_trajectory_round_trips_through_precomputed_dataset(tmp_path) -> 
         sample["video_start"]["latents"].reshape(128, -1).T,
         video_start[0].astype(mx.bfloat16),
     ).item()
+
+
+def test_stage1_trajectory_step_round_trips_through_precomputed_dataset(tmp_path) -> None:
+    video = mx.arange(8 * 128).reshape(1, 8, 128).astype(mx.float32)
+    audio = mx.arange(3 * 128).reshape(1, 3, 128).astype(mx.float32)
+    paths = save_stage1_trajectory_step(
+        tmp_path,
+        3,
+        0,
+        sigma=1.0,
+        video=video,
+        audio=audio,
+        video_text_embeds=mx.zeros((1, 4, 4096)),
+        audio_text_embeds=mx.zeros((1, 4, 2048)),
+        spatial_dims=(2, 2, 2),
+        frame_rate=24.0,
+        noise_seed=10042,
+        seed=42,
+        prompt="test prompt",
+    )
+    dataset = PrecomputedDataset(
+        str(tmp_path),
+        data_sources={
+            "stage1_video_step_00": "video",
+            "stage1_audio_step_00": "audio",
+            "stage1_conditions": "conditions",
+        },
+    )
+    sample = dataset[0]
+
+    assert len(paths) == 3
+    assert sample["video"]["latents"].shape == (8, 128)
+    assert sample["audio"]["latents"].shape == (8, 3, 16)
+    assert int(sample["video"]["noise_seed"].item()) == 10042
+    assert sample["video"]["latents"].dtype == mx.bfloat16
 
 
 def test_stage2_trajectory_saves_optional_intermediate(tmp_path) -> None:

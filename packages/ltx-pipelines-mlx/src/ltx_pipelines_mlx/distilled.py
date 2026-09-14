@@ -235,6 +235,7 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
         stage2_steps: int | None = None,
         image: str | None = None,
         images=None,
+        stage1_trajectory_callback: Callable[..., None] | None = None,
         stage2_trajectory_callback: Callable[..., None] | None = None,
         **_unused_kwargs,
     ) -> tuple[mx.array, mx.array]:
@@ -249,6 +250,8 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
             stage1_steps: Stage 1 steps (default: full DISTILLED_SIGMAS = 8).
             stage2_steps: Stage 2 steps (default: full STAGE_2_SIGMAS = 3).
             image: Optional reference image for I2V conditioning.
+            stage1_trajectory_callback: Optional research callback invoked for
+                the initial stage-1 state and every completed transition.
             stage2_trajectory_callback: Optional research callback invoked with
                 the exact stage-2 start/terminal video and audio tokens plus
                 text conditioning. The default ``None`` has no runtime effect.
@@ -337,6 +340,23 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
 
         sigmas_1 = DISTILLED_SIGMAS[: stage1_steps + 1] if stage1_steps else DISTILLED_SIGMAS
 
+        def capture_stage1(sigma: float, video: mx.array, audio: mx.array) -> None:
+            if stage1_trajectory_callback is not None:
+                stage1_trajectory_callback(
+                    sigma=sigma,
+                    video=video,
+                    audio=audio,
+                    video_text_embeds=video_embeds,
+                    audio_text_embeds=audio_embeds,
+                    spatial_dims=(F, H_half, W_half),
+                    frame_rate=frame_rate,
+                    noise_seed=seed + ANCESTRAL_NOISE_SEED_OFFSET,
+                    seed=seed,
+                    prompt=prompt,
+                )
+
+        capture_stage1(sigmas_1[0], video_state.latent, audio_state.latent)
+
         stage1_dit = self.dit
         if self._tile_count is not None:
             from ltx_core_mlx.components.modality_tiling import TiledLTXModel, VideoModalityTiler
@@ -360,6 +380,7 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
                 noise_seed=seed + ANCESTRAL_NOISE_SEED_OFFSET,
                 eta=ANCESTRAL_ETA,
                 s_noise=ANCESTRAL_S_NOISE,
+                step_callback=capture_stage1 if stage1_trajectory_callback is not None else None,
             )
         else:
             # 2.3 stage 1: deterministic Euler (unchanged behaviour).
@@ -370,6 +391,7 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
                 video_text_embeds=video_embeds,
                 audio_text_embeds=audio_embeds,
                 sigmas=sigmas_1,
+                step_callback=capture_stage1 if stage1_trajectory_callback is not None else None,
             )
         if self.low_memory:
             aggressive_cleanup()
