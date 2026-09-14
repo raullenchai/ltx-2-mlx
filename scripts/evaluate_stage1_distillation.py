@@ -11,6 +11,13 @@ from ltx_trainer_mlx.model_loader import load_transformer
 from ltx_trainer_mlx.stage1_distillation_evaluator import evaluate_stage1_student, load_stage1_student
 
 
+def percent_change(value: float, baseline: float) -> float | None:
+    """Return a JSON-safe relative change, or null for a zero baseline."""
+    if baseline == 0.0:
+        return None
+    return (value / baseline - 1.0) * 100
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True)
@@ -34,8 +41,8 @@ def main() -> int:
     result = {
         "student": student,
         "baseline": baseline,
-        "video_mse_change_percent": (student["video_mse"] / baseline["video_mse"] - 1.0) * 100,
-        "audio_mse_change_percent": (student["audio_mse"] / baseline["audio_mse"] - 1.0) * 100,
+        "video_mse_change_percent": percent_change(student["video_mse"], baseline["video_mse"]),
+        "audio_mse_change_percent": percent_change(student["audio_mse"], baseline["audio_mse"]),
     }
     rendered = json.dumps(result, indent=2, sort_keys=True)
     if args.output:
