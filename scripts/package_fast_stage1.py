@@ -17,6 +17,23 @@ _SCHEDULE = [1.0, 0.98125, 0.909375, 0.421875, 0.0]
 _NOISE_STEP_INDICES = [0, 3, 5, 7]
 
 
+def _validate_source_checkpoint(metadata: dict[str, str]) -> None:
+    expected = {
+        "distillation": "stage1_transition",
+        "stage1_sigma": "0.421875",
+        "stage1_target_sigma": "0.0",
+        "stage1_video_start_latents_dir": "stage1_video_step_07",
+        "stage1_video_target_latents_dir": "stage1_video_step_08",
+        "stage1_audio_start_latents_dir": "stage1_audio_step_07",
+        "stage1_audio_target_latents_dir": "stage1_audio_step_08",
+    }
+    for key, value in expected.items():
+        if metadata.get(key) != value:
+            raise ValueError(f"checkpoint is not the final compressed Stage-1 curriculum artifact: {key}")
+    if "stage1_noise_step_index" in metadata or metadata.get("stage1_sampler") == "ancestral":
+        raise ValueError("final compressed Stage-1 checkpoint must not declare ancestral noise")
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -52,6 +69,7 @@ def main() -> int:
 
     with safe_open(args.checkpoint, framework="numpy") as source:
         metadata = source.metadata() or {}
+    _validate_source_checkpoint(metadata)
     if int(metadata.get("lora_rank", "0")) <= 0 or float(metadata.get("lora_alpha", "0")) <= 0:
         raise ValueError("checkpoint must declare a positive LoRA rank and alpha")
 

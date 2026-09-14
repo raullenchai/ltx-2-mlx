@@ -13,6 +13,10 @@ from safetensors import safe_open
 
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _IMMUTABLE_REVISION_RE = re.compile(r"[0-9a-f]{40,64}")
+_CAPABILITY_SCHEDULES = {
+    "ltx_stage2_transition_v1": (0.909375, 0.421875, 0.0),
+    "ltx_stage2_terminal_v1": (0.909375, 0.0),
+}
 
 
 @dataclass(frozen=True)
@@ -54,14 +58,11 @@ def _parse_schedule(value: str, capability: str) -> tuple[float, ...]:
         raw = json.loads(value)
     except json.JSONDecodeError as exc:
         raise ValueError("fast_stage2_schedule must be valid JSON") from exc
-    expected_length = {
-        "ltx_stage2_transition_v1": 3,
-        "ltx_stage2_terminal_v1": 2,
-    }.get(capability)
-    if expected_length is None:
+    expected = _CAPABILITY_SCHEDULES.get(capability)
+    if expected is None:
         raise ValueError(f"unsupported fast stage-2 capability {capability!r}")
-    if not isinstance(raw, list) or len(raw) != expected_length:
-        raise ValueError(f"{capability} requires a {expected_length}-sigma schedule")
+    if not isinstance(raw, list) or len(raw) != len(expected):
+        raise ValueError(f"{capability} requires a {len(expected)}-sigma schedule")
     if any(isinstance(item, bool) or not isinstance(item, (int, float)) for item in raw):
         raise ValueError("fast_stage2_schedule must contain only numbers")
     schedule = tuple(float(item) for item in raw)
@@ -71,6 +72,8 @@ def _parse_schedule(value: str, capability: str) -> tuple[float, ...]:
         raise ValueError("fast_stage2_schedule must decrease strictly to zero")
     if schedule[0] > 1.0:
         raise ValueError("fast_stage2_schedule must start in (0, 1]")
+    if schedule != expected:
+        raise ValueError(f"{capability} requires the exact qualified schedule {list(expected)}")
     return schedule
 
 

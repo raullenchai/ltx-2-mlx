@@ -88,6 +88,7 @@ def test_reads_terminal_fast_stage2_contract(tmp_path) -> None:
         ({"fast_stage2_capability": ""}, "missing 'fast_stage2_capability'"),
         ({"fast_stage2_schedule": "[0.9, 0.5]"}, "3-sigma"),
         ({"fast_stage2_schedule": "[0.9, 0.9, 0]"}, "decrease strictly"),
+        ({"fast_stage2_schedule": "[0.9, 0.4, 0]", "stage2_sigma": "0.9", "stage2_target_sigma": "0.4"}, "exact qualified schedule"),
         ({"stage2_sigma": "0.8"}, "stage2_sigma does not match"),
         ({"stage2_target_sigma": "0.4"}, "stage2_target_sigma does not match"),
         ({"stage2_steps": "1"}, "stage2_steps=2"),

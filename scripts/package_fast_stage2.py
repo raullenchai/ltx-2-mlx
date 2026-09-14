@@ -13,6 +13,8 @@ from safetensors import safe_open
 from safetensors.numpy import load_file, save_file
 
 _IMMUTABLE_REVISION_RE = re.compile(r"[0-9a-f]{40,64}")
+_START_SIGMA = 0.909375
+_PROGRESSIVE_TARGET_SIGMA = 0.421875
 
 
 def _sha256(path: Path) -> str:
@@ -29,6 +31,24 @@ def _config_path(model_dir: Path) -> Path:
         if path.is_file():
             return path
     raise FileNotFoundError("model has no embedded_config.json or config.json")
+
+
+def _validate_source_checkpoint(metadata: dict[str, str]) -> tuple[float, float]:
+    if metadata.get("distillation") != "stage2_terminal":
+        raise ValueError("checkpoint is not a Stage-2 transition-distillation artifact")
+    start_sigma = float(metadata.get("stage2_sigma", "nan"))
+    target_sigma = float(metadata.get("stage2_target_sigma", "nan"))
+    if start_sigma != _START_SIGMA or target_sigma not in (0.0, _PROGRESSIVE_TARGET_SIGMA):
+        raise ValueError("checkpoint does not use a qualified Stage-2 transition")
+    target_name = "terminal" if target_sigma == 0.0 else "intermediate"
+    expected = {
+        "stage2_video_target_latents_dir": f"stage2_video_{target_name}_latents",
+        "stage2_audio_target_latents_dir": f"stage2_audio_{target_name}_latents",
+    }
+    for key, value in expected.items():
+        if metadata.get(key) != value:
+            raise ValueError(f"checkpoint has incompatible Stage-2 target metadata: {key}")
+    return start_sigma, target_sigma
 
 
 def main() -> int:
@@ -50,10 +70,7 @@ def main() -> int:
 
     with safe_open(args.checkpoint, framework="numpy") as source:
         metadata = source.metadata() or {}
-    start_sigma = float(metadata["stage2_sigma"])
-    target_sigma = float(metadata["stage2_target_sigma"])
-    if not 0 <= target_sigma < start_sigma <= 1:
-        raise ValueError("stage-2 checkpoint must decrease from a valid start sigma")
+    start_sigma, target_sigma = _validate_source_checkpoint(metadata)
 
     terminal = target_sigma == 0.0
     capability = "ltx_stage2_terminal_v1" if terminal else "ltx_stage2_transition_v1"

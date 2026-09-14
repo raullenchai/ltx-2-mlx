@@ -5,10 +5,22 @@ import json
 import sys
 
 import numpy as np
+import pytest
 from safetensors import safe_open
 from safetensors.numpy import save_file
 
-from scripts.package_fast_stage1 import main
+from scripts.package_fast_stage1 import _validate_source_checkpoint, main
+
+
+def test_rejects_nonfinal_stage1_source_checkpoint() -> None:
+    with pytest.raises(ValueError, match="final compressed Stage-1"):
+        _validate_source_checkpoint(
+            {
+                "distillation": "stage1_transition",
+                "stage1_sigma": "1.0",
+                "stage1_target_sigma": "0.98125",
+            }
+        )
 
 
 def test_packages_selected_stage1_schedule(monkeypatch, tmp_path) -> None:
@@ -25,7 +37,17 @@ def test_packages_selected_stage1_schedule(monkeypatch, tmp_path) -> None:
             "block.to_q.lora_B.weight": np.zeros((8, 2), dtype=np.float32),
         },
         checkpoint,
-        metadata={"lora_rank": "2", "lora_alpha": "2"},
+        metadata={
+            "distillation": "stage1_transition",
+            "stage1_sigma": "0.421875",
+            "stage1_target_sigma": "0.0",
+            "stage1_video_start_latents_dir": "stage1_video_step_07",
+            "stage1_video_target_latents_dir": "stage1_video_step_08",
+            "stage1_audio_start_latents_dir": "stage1_audio_step_07",
+            "stage1_audio_target_latents_dir": "stage1_audio_step_08",
+            "lora_rank": "2",
+            "lora_alpha": "2",
+        },
     )
     output = tmp_path / "package"
     revision = "a" * 40
