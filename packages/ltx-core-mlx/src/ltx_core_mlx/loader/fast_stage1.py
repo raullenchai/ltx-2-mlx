@@ -2,22 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from safetensors import safe_open
 
-from ltx_core_mlx.loader.fast_stage2 import (
-    _IMMUTABLE_REVISION_RE,
-    _SHA256_RE,
-    _config_sha256,
-    _file_sha256,
-    _package_file,
-    _required,
-    _validate_lora_shapes,
-)
+_SHA256_RE = re.compile(r"[0-9a-f]{64}")
+_IMMUTABLE_REVISION_RE = re.compile(r"[0-9a-f]{40,64}")
 
 
 @dataclass(frozen=True)
@@ -47,6 +42,58 @@ class FastStage1Package:
     transformer_path: Path
     artifact_sha256: str
     contract: FastStage1Contract
+
+
+def _required(metadata: dict[str, str], key: str) -> str:
+    value = metadata.get(key, "").strip()
+    if not value:
+        raise ValueError(f"fast stage-1 checkpoint is missing {key!r}")
+    return value
+
+
+def _validate_lora_shapes(checkpoint, rank: int) -> None:
+    shapes = {name: checkpoint.get_slice(name).get_shape() for name in checkpoint.keys()}  # noqa: SIM118
+    a_suffix = ".lora_A.weight"
+    b_suffix = ".lora_B.weight"
+    prefixes = {name[: -len(a_suffix)] for name in shapes if name.endswith(a_suffix)}
+    prefixes.update(name[: -len(b_suffix)] for name in shapes if name.endswith(b_suffix))
+    if not prefixes:
+        raise ValueError("fast stage-1 checkpoint contains no LoRA tensor pairs")
+    for prefix in sorted(prefixes):
+        a_name, b_name = f"{prefix}{a_suffix}", f"{prefix}{b_suffix}"
+        if a_name not in shapes or b_name not in shapes:
+            raise ValueError(f"incomplete LoRA tensor pair for {prefix!r}")
+        a_shape, b_shape = shapes[a_name], shapes[b_name]
+        if len(a_shape) != 2 or len(b_shape) != 2 or a_shape[0] != rank or b_shape[1] != rank:
+            raise ValueError(f"LoRA tensor pair for {prefix!r} does not match declared rank {rank}")
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as checkpoint:
+        for chunk in iter(lambda: checkpoint.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _config_sha256(model_dir: Path) -> str:
+    for name in ("embedded_config.json", "config.json"):
+        path = model_dir / name
+        if path.is_file():
+            return _file_sha256(path)
+    raise ValueError("fast stage-1 requires embedded_config.json or config.json")
+
+
+def _package_file(model_dir: Path, value: object, key: str, *, suffix: str) -> Path:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"fast stage-1 manifest is missing {key!r}")
+    relative = Path(value)
+    if relative.is_absolute() or len(relative.parts) != 1 or relative.suffix != suffix:
+        raise ValueError(f"fast stage-1 manifest {key!r} must name one local {suffix} file")
+    path = model_dir / relative
+    if not path.is_file():
+        raise FileNotFoundError(f"fast stage-1 package file not found: {path}")
+    return path
 
 
 def _parse_schedule(value: str) -> tuple[float, ...]:
