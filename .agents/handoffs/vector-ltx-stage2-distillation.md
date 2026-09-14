@@ -18,6 +18,10 @@ the scaled benchmark. Branch:
   and trajectory differences remain, so this is not release quality.
 - Training took 4.6 minutes at 19.80 GiB peak on MZR-3. Full tests pass:
   `616 passed, 22 skipped` with `/opt/homebrew/bin` on `PATH`.
+- A zero-shot 768x512 / 1536-token hummingbird probe also improved: video
+  MSE `0.025395 -> 0.022698`, audio MSE `0.021937 -> 0.010367`, with the
+  subject and motion preserved in the decode. One transformer evaluation was
+  10.9-11.4 seconds at this shape.
 - Source audits found no LTX-specific optimization in mlx-vlm or omlx. Their
   native LLM kernels do not match LTX sequence/model semantics.
 
@@ -27,6 +31,8 @@ the scaled benchmark. Branch:
   `/Volumes/RTL-2T/datasets/ltx-stage2-distillation/progressive-pilot-2026-09-13/`
 - Step-50 adapter:
   `/Volumes/RTL-2T/models-cold/ltx-stage2-distillation/progressive-pilot-2026-09-13/`
+- 768x512 probe:
+  `/Volumes/RTL-2T/datasets/ltx-stage2-distillation/progressive-hires-probe-2026-09-13/`
 - Detailed metrics and decoded pairs are recorded outside this repository in
   `123/strategy/2026-09-13-ltx-stage2-distillation-pilot-results.md`.
 
