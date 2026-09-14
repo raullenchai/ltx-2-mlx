@@ -467,6 +467,10 @@ class TrainingStrategyConfig(ConfigBaseModel):
     audio_start_latents_dir: str = "stage2_audio_start_latents"
     audio_terminal_latents_dir: str = "stage2_audio_terminal_latents"
     conditions_dir: str = "conditions"
+    ancestral_noise_step_index: int | None = Field(default=None, ge=0)
+    ancestral_noise_total_steps: int = Field(default=8, gt=0)
+    ancestral_eta: float = Field(default=1.0, ge=0, le=1)
+    ancestral_s_noise: float = Field(default=1.0, ge=0)
     video_loss_weight: float = Field(default=1.0, ge=0)
     audio_loss_weight: float = Field(default=1.0, ge=0)
 
@@ -477,6 +481,11 @@ class TrainingStrategyConfig(ConfigBaseModel):
                 raise ValueError("target_sigma must be less than sigma")
             if self.video_loss_weight == 0 and self.audio_loss_weight == 0:
                 raise ValueError("at least one distillation loss weight must be positive")
+        if self.name == "stage1_transition_distill" and self.ancestral_noise_step_index is not None:
+            if self.target_sigma == 0:
+                raise ValueError("noise-coupled ancestral transitions must remain above sigma zero")
+            if self.ancestral_noise_step_index >= self.ancestral_noise_total_steps:
+                raise ValueError("ancestral noise step must be in the original schedule")
         return self
 
 

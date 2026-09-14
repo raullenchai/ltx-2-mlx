@@ -42,6 +42,12 @@ def _strategy(metadata: dict[str, str]) -> Stage1TransitionDistillStrategy:
             audio_start_latents_dir=metadata["stage1_audio_start_latents_dir"],
             audio_terminal_latents_dir=metadata["stage1_audio_target_latents_dir"],
             conditions_dir=metadata.get("stage1_conditions_dir", "stage1_conditions"),
+            ancestral_noise_step_index=(
+                int(metadata["stage1_noise_step_index"]) if metadata.get("stage1_sampler") == "ancestral" else None
+            ),
+            ancestral_noise_total_steps=int(metadata.get("stage1_noise_total_steps", "8")),
+            ancestral_eta=float(metadata.get("stage1_ancestral_eta", "1.0")),
+            ancestral_s_noise=float(metadata.get("stage1_ancestral_s_noise", "1.0")),
         )
     )
 
@@ -66,7 +72,7 @@ def load_stage1_student(
     return model, metadata
 
 
-def predict_stage1_transition(model: nn.Module, inputs, sigma: float, target_sigma: float):
+def predict_stage1_transition(model: nn.Module, strategy, inputs, batch):
     assert inputs.audio is not None
     start = time.perf_counter()
     video_velocity, audio_velocity = model(
@@ -80,9 +86,7 @@ def predict_stage1_transition(model: nn.Module, inputs, sigma: float, target_sig
         audio_positions=inputs.audio.positions,
         audio_timesteps=inputs.audio.timesteps,
     )
-    delta = sigma - target_sigma
-    video = inputs.video.latent - delta * video_velocity
-    audio = inputs.audio.latent - delta * audio_velocity
+    video, audio = strategy.advance_transition(video_velocity, audio_velocity, inputs, batch)
     mx.eval(video, audio)
     return video, audio, time.perf_counter() - start
 
@@ -116,12 +120,13 @@ def evaluate_stage1_student(
     target_sigma = strategy.config.target_sigma
     samples = []
     for index in range(count):
-        inputs = strategy.prepare_training_inputs(_add_batch(dataset[index]), sigma_sampler=None)
+        batch = _add_batch(dataset[index])
+        inputs = strategy.prepare_training_inputs(batch, sigma_sampler=None)
         assert inputs.audio is not None
-        video, audio, elapsed = predict_stage1_transition(model, inputs, sigma, target_sigma)
-        delta = sigma - target_sigma
-        video_target = inputs.video.latent - delta * inputs.video_targets
-        audio_target = inputs.audio.latent - delta * inputs.audio_targets
+        video, audio, elapsed = predict_stage1_transition(model, strategy, inputs, batch)
+        video_target, audio_target = strategy.advance_transition(
+            inputs.video_targets, inputs.audio_targets, inputs, batch
+        )
         samples.append(
             {
                 "index": index,

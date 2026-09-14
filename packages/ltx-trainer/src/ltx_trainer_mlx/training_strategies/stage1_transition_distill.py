@@ -6,7 +6,8 @@ from typing import Any, Literal
 
 import mlx.core as mx
 
-from ltx_trainer_mlx.distillation import transition_velocity_target
+from ltx_pipelines_mlx.utils.samplers import ancestral_euler_step, ancestral_step_noise
+from ltx_trainer_mlx.distillation import ancestral_velocity_target, euler_step, transition_velocity_target
 from ltx_trainer_mlx.training_strategies.base_strategy import (
     DEFAULT_FPS,
     ModalityInputs,
@@ -31,6 +32,10 @@ class Stage1TransitionDistillConfig(TrainingStrategyConfigBase):
         audio_start_latents_dir: str,
         audio_terminal_latents_dir: str,
         conditions_dir: str = "stage1_conditions",
+        ancestral_noise_step_index: int | None = None,
+        ancestral_noise_total_steps: int = 8,
+        ancestral_eta: float = 1.0,
+        ancestral_s_noise: float = 1.0,
         video_loss_weight: float = 1.0,
         audio_loss_weight: float = 1.0,
     ) -> None:
@@ -39,6 +44,13 @@ class Stage1TransitionDistillConfig(TrainingStrategyConfigBase):
             raise ValueError("stage-1 transition requires 0 <= target_sigma < sigma <= 1")
         if video_loss_weight < 0 or audio_loss_weight < 0 or video_loss_weight + audio_loss_weight == 0:
             raise ValueError("at least one non-negative loss weight must be positive")
+        if ancestral_noise_step_index is not None:
+            if target_sigma == 0:
+                raise ValueError("noise-coupled ancestral transitions must remain above sigma zero")
+            if ancestral_noise_total_steps <= 0 or not 0 <= ancestral_noise_step_index < ancestral_noise_total_steps:
+                raise ValueError("ancestral noise step must be in the original schedule")
+        if not 0 <= ancestral_eta <= 1 or ancestral_s_noise < 0:
+            raise ValueError("ancestral eta/noise strength is invalid")
         self.sigma = sigma
         self.target_sigma = target_sigma
         self.video_start_latents_dir = video_start_latents_dir
@@ -46,6 +58,10 @@ class Stage1TransitionDistillConfig(TrainingStrategyConfigBase):
         self.audio_start_latents_dir = audio_start_latents_dir
         self.audio_terminal_latents_dir = audio_terminal_latents_dir
         self.conditions_dir = conditions_dir
+        self.ancestral_noise_step_index = ancestral_noise_step_index
+        self.ancestral_noise_total_steps = ancestral_noise_total_steps
+        self.ancestral_eta = ancestral_eta
+        self.ancestral_s_noise = ancestral_s_noise
         self.video_loss_weight = video_loss_weight
         self.audio_loss_weight = audio_loss_weight
 
@@ -100,12 +116,23 @@ class Stage1TransitionDistillStrategy(TrainingStrategy):
             raise ValueError("stage-1 audio boundary shapes must match")
 
         sigma = mx.full((batch_size,), self.config.sigma, dtype=video_start.dtype)
-        video_targets = transition_velocity_target(
-            video_start, video_terminal, self.config.sigma, self.config.target_sigma
-        )
-        audio_targets = transition_velocity_target(
-            audio_start, audio_terminal, self.config.sigma, self.config.target_sigma
-        )
+        if self.config.ancestral_noise_step_index is None:
+            video_targets = transition_velocity_target(
+                video_start, video_terminal, self.config.sigma, self.config.target_sigma
+            )
+            audio_targets = transition_velocity_target(
+                audio_start, audio_terminal, self.config.sigma, self.config.target_sigma
+            )
+        else:
+            video_noise, audio_noise = self._ancestral_noise(batch, video_start.shape, audio_start.shape)
+            target_args = {
+                "sigma": self.config.sigma,
+                "target_sigma": self.config.target_sigma,
+                "eta": self.config.ancestral_eta,
+                "s_noise": self.config.ancestral_s_noise,
+            }
+            video_targets = ancestral_velocity_target(video_start, video_terminal, video_noise, **target_args)
+            audio_targets = ancestral_velocity_target(audio_start, audio_terminal, audio_noise, **target_args)
         conditions = batch["conditions"]
         context_mask = conditions["prompt_attention_mask"]
         return ModelInputs(
@@ -133,6 +160,67 @@ class Stage1TransitionDistillStrategy(TrainingStrategy):
             audio_loss_mask=mx.ones((batch_size, audio_start.shape[1]), dtype=mx.bool_),
         )
 
+    def _ancestral_noise(
+        self,
+        batch: dict[str, Any],
+        video_shape: tuple[int, ...],
+        audio_shape: tuple[int, ...],
+    ) -> tuple[mx.array, mx.array]:
+        step_index = self.config.ancestral_noise_step_index
+        if step_index is None:
+            raise ValueError("ancestral noise requested for a deterministic transition")
+        seeds = batch["video_start"].get("noise_seed")
+        if seeds is None or seeds.size != video_shape[0]:
+            raise ValueError("noise-coupled stage-1 training requires one noise_seed per sample")
+        video_noises, audio_noises = [], []
+        for seed in seeds.reshape(-1):
+            video_noise, audio_noise = ancestral_step_noise(
+                int(seed.item()),
+                self.config.ancestral_noise_total_steps,
+                step_index,
+                (1, *video_shape[1:]),
+                (1, *audio_shape[1:]),
+            )
+            video_noises.append(video_noise)
+            audio_noises.append(audio_noise)
+        return mx.concatenate(video_noises), mx.concatenate(audio_noises)
+
+    def advance_transition(
+        self,
+        video_velocity: mx.array,
+        audio_velocity: mx.array,
+        inputs: ModelInputs,
+        batch: dict[str, Any],
+    ) -> tuple[mx.array, mx.array]:
+        """Apply the configured runtime transition to predicted velocities."""
+        assert inputs.audio is not None
+        if self.config.ancestral_noise_step_index is None:
+            return (
+                euler_step(inputs.video.latent, video_velocity, self.config.sigma, self.config.target_sigma),
+                euler_step(inputs.audio.latent, audio_velocity, self.config.sigma, self.config.target_sigma),
+            )
+        video_noise, audio_noise = self._ancestral_noise(batch, inputs.video.latent.shape, inputs.audio.latent.shape)
+        return (
+            ancestral_euler_step(
+                inputs.video.latent,
+                inputs.video.latent - self.config.sigma * video_velocity,
+                self.config.sigma,
+                self.config.target_sigma,
+                video_noise,
+                eta=self.config.ancestral_eta,
+                s_noise=self.config.ancestral_s_noise,
+            ),
+            ancestral_euler_step(
+                inputs.audio.latent,
+                inputs.audio.latent - self.config.sigma * audio_velocity,
+                self.config.sigma,
+                self.config.target_sigma,
+                audio_noise,
+                eta=self.config.ancestral_eta,
+                s_noise=self.config.ancestral_s_noise,
+            ),
+        )
+
     def compute_loss(self, video_pred: mx.array, audio_pred: mx.array | None, inputs: ModelInputs) -> mx.array:
         if audio_pred is None or inputs.audio_targets is None:
             raise ValueError("stage-1 transition distillation requires audio predictions")
@@ -141,7 +229,7 @@ class Stage1TransitionDistillStrategy(TrainingStrategy):
         return self.config.video_loss_weight * video_loss + self.config.audio_loss_weight * audio_loss
 
     def get_checkpoint_metadata(self) -> dict[str, Any]:
-        return {
+        metadata = {
             "distillation": "stage1_transition",
             "stage1_sigma": self.config.sigma,
             "stage1_target_sigma": self.config.target_sigma,
@@ -151,3 +239,12 @@ class Stage1TransitionDistillStrategy(TrainingStrategy):
             "stage1_audio_target_latents_dir": self.config.audio_terminal_latents_dir,
             "stage1_conditions_dir": self.config.conditions_dir,
         }
+        if self.config.ancestral_noise_step_index is not None:
+            metadata.update(
+                stage1_sampler="ancestral",
+                stage1_noise_step_index=self.config.ancestral_noise_step_index,
+                stage1_noise_total_steps=self.config.ancestral_noise_total_steps,
+                stage1_ancestral_eta=self.config.ancestral_eta,
+                stage1_ancestral_s_noise=self.config.ancestral_s_noise,
+            )
+        return metadata

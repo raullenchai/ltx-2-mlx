@@ -1,0 +1,49 @@
+# Noise-coupled pilot for the first compressed LTX-2.5 stage-1 transition.
+# It learns original boundaries 0 -> 2 while runtime re-injects the exact
+# seeded noise lane for original step 0. This is research-only until decoded
+# motion and multi-seed diversity pass prompt-disjoint blind evaluation.
+
+model:
+  model_path: ~/.cache/huggingface/hub/models--MrMofer--ltx-2.5-mlx-q8/snapshots/latest
+  transformer_file: transformer-distilled.safetensors
+  training_mode: lora
+
+lora:
+  rank: 8
+  alpha: 8
+  dropout: 0.0
+  target_modules: [to_q, to_k, to_v]
+
+optimization:
+  learning_rate: 5.0e-5
+  steps: 100
+  batch_size: 1
+  gradient_accumulation_steps: 1
+  max_grad_norm: 1.0
+  weight_decay: 0.0
+  enable_gradient_checkpointing: true
+  scheduler_type: linear
+  scheduler_params: {start_factor: 1.0, end_factor: 0.2}
+
+data:
+  preprocessed_data_root: ./stage1-trajectories
+
+training_strategy:
+  name: stage1_transition_distill
+  sigma: 1.0
+  target_sigma: 0.9875
+  video_start_latents_dir: stage1_video_step_00
+  video_terminal_latents_dir: stage1_video_step_02
+  audio_start_latents_dir: stage1_audio_step_00
+  audio_terminal_latents_dir: stage1_audio_step_02
+  conditions_dir: stage1_conditions
+  ancestral_noise_step_index: 0
+  ancestral_noise_total_steps: 8
+  ancestral_eta: 1.0
+  ancestral_s_noise: 1.0
+
+flow_matching: {timestep_sampling_mode: uniform}
+validation: {prompts: [], interval: null, generate_audio: true}
+checkpoints: {interval: 20, keep_last_n: 5, precision: bfloat16}
+seed: 42
+output_dir: ./outputs/stage1_stochastic_transition_distill

@@ -128,6 +128,10 @@ def get_training_strategy(config: TrainingStrategyConfig | object) -> TrainingSt
                 audio_start_latents_dir=config.audio_start_latents_dir,
                 audio_terminal_latents_dir=config.audio_terminal_latents_dir,
                 conditions_dir=getattr(config, "conditions_dir", "stage1_conditions"),
+                ancestral_noise_step_index=getattr(config, "ancestral_noise_step_index", None),
+                ancestral_noise_total_steps=getattr(config, "ancestral_noise_total_steps", 8),
+                ancestral_eta=getattr(config, "ancestral_eta", 1.0),
+                ancestral_s_noise=getattr(config, "ancestral_s_noise", 1.0),
                 video_loss_weight=getattr(config, "video_loss_weight", 1.0),
                 audio_loss_weight=getattr(config, "audio_loss_weight", 1.0),
             )

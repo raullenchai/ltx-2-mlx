@@ -323,6 +323,64 @@ def test_stage1_transition_strategy_reconstructs_captured_target(tmp_path) -> No
     assert mx.allclose(reconstructed_audio, audio_target.astype(mx.bfloat16), atol=1e-4).item()
 
 
+def test_stage1_noise_coupled_strategy_reconstructs_captured_target(tmp_path) -> None:
+    video_start = mx.arange(8 * 128).reshape(1, 8, 128).astype(mx.float32) / 100
+    video_target = video_start * 0.8
+    audio_start = mx.arange(3 * 128).reshape(1, 3, 128).astype(mx.float32) / 100
+    audio_target = audio_start * 0.7
+    common = dict(
+        output_root=tmp_path,
+        index=0,
+        video_text_embeds=mx.zeros((1, 4, 4096)),
+        audio_text_embeds=mx.zeros((1, 4, 2048)),
+        spatial_dims=(2, 2, 2),
+        frame_rate=24.0,
+        noise_seed=10042,
+        seed=42,
+        prompt="test",
+    )
+    save_stage1_trajectory_step(step_index=0, sigma=1.0, video=video_start, audio=audio_start, **common)
+    save_stage1_trajectory_step(step_index=2, sigma=0.9875, video=video_target, audio=audio_target, **common)
+    strategy = Stage1TransitionDistillStrategy(
+        Stage1TransitionDistillConfig(
+            sigma=1.0,
+            target_sigma=0.9875,
+            video_start_latents_dir="stage1_video_step_00",
+            video_terminal_latents_dir="stage1_video_step_02",
+            audio_start_latents_dir="stage1_audio_step_00",
+            audio_terminal_latents_dir="stage1_audio_step_02",
+            ancestral_noise_step_index=0,
+        )
+    )
+    dataset = PrecomputedDataset(str(tmp_path), data_sources=strategy.get_data_sources())
+    batch = {
+        key: ({name: mx.expand_dims(value, 0) for name, value in item.items()} if isinstance(item, dict) else item)
+        for key, item in dataset[0].items()
+    }
+
+    inputs = strategy.prepare_training_inputs(batch, sigma_sampler=None)
+    assert inputs.audio is not None and inputs.audio_targets is not None
+    reconstructed_video, reconstructed_audio = strategy.advance_transition(
+        inputs.video_targets, inputs.audio_targets, inputs, batch
+    )
+    assert mx.allclose(reconstructed_video, video_target.astype(mx.bfloat16), atol=1e-4).item()
+    assert mx.allclose(reconstructed_audio, audio_target.astype(mx.bfloat16), atol=1e-4).item()
+    assert strategy.get_checkpoint_metadata()["stage1_sampler"] == "ancestral"
+
+
+def test_stage1_noise_coupling_rejects_terminal_transition() -> None:
+    with pytest.raises(ValueError, match="remain above sigma zero"):
+        Stage1TransitionDistillConfig(
+            sigma=0.725,
+            target_sigma=0.0,
+            video_start_latents_dir="video-start",
+            video_terminal_latents_dir="video-target",
+            audio_start_latents_dir="audio-start",
+            audio_terminal_latents_dir="audio-target",
+            ancestral_noise_step_index=6,
+        )
+
+
 def test_stage2_trajectory_saves_optional_intermediate(tmp_path) -> None:
     video = mx.arange(8 * 128).reshape(1, 8, 128).astype(mx.float32)
     audio = mx.arange(3 * 128).reshape(1, 3, 128).astype(mx.float32)
