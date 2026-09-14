@@ -361,6 +361,12 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
             stage2_x0_model = X0Model(TiledLTXModel(self.dit, tiler_2))
 
         self._pre_denoise_flush(video_state_2, audio_state_2)
+        intermediate: dict[str, object] = {}
+
+        def capture_intermediate(sigma_next: float, video: mx.array, audio: mx.array) -> None:
+            if abs(sigma_next - STAGE_2_SIGMAS[-2]) < 1e-9:
+                intermediate.update(sigma=sigma_next, video=video, audio=audio)
+
         output_2 = denoise_loop(
             model=stage2_x0_model,
             video_state=video_state_2,
@@ -368,13 +374,19 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
             video_text_embeds=video_embeds,
             audio_text_embeds=audio_embeds,
             sigmas=sigmas_2,
+            step_callback=capture_intermediate if stage2_trajectory_callback is not None else None,
         )
         if stage2_trajectory_callback is not None:
+            if len(sigmas_2) == len(STAGE_2_SIGMAS) and not intermediate:
+                raise RuntimeError("full stage-2 trajectory did not capture the penultimate sigma")
             stage2_trajectory_callback(
                 video_start=video_state_2.latent,
                 video_terminal=output_2.video_latent,
                 audio_start=audio_state_2.latent,
                 audio_terminal=output_2.audio_latent,
+                video_intermediate=intermediate.get("video"),
+                audio_intermediate=intermediate.get("audio"),
+                intermediate_sigma=intermediate.get("sigma"),
                 video_text_embeds=video_embeds,
                 audio_text_embeds=audio_embeds,
                 spatial_dims=(F, H_full, W_full),

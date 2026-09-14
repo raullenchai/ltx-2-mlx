@@ -21,6 +21,9 @@ def main() -> int:
     parser.add_argument("--data", required=True)
     parser.add_argument("--transformer-file")
     parser.add_argument("--sigma", type=float, default=0.909375, help="Baseline start sigma (ignored with checkpoint).")
+    parser.add_argument("--target-sigma", type=float, default=0.0, help="Baseline target sigma.")
+    parser.add_argument("--video-target-dir", default="stage2_video_terminal_latents")
+    parser.add_argument("--audio-target-dir", default="stage2_audio_terminal_latents")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
@@ -35,6 +38,9 @@ def main() -> int:
         model, metadata = load_terminal_baseline(
             args.model,
             sigma=args.sigma,
+            target_sigma=args.target_sigma,
+            video_target_latents_dir=args.video_target_dir,
+            audio_target_latents_dir=args.audio_target_dir,
             transformer_file=args.transformer_file,
         )
     result = evaluate_terminal_student(model, args.data, metadata, limit=args.limit)

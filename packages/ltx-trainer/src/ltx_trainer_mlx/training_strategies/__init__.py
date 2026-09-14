@@ -84,6 +84,7 @@ def get_training_strategy(config: TrainingStrategyConfig | object) -> TrainingSt
         elif name == "stage2_terminal_distill":
             config = Stage2TerminalDistillConfig(
                 sigma=getattr(config, "sigma", 0.909375),
+                target_sigma=getattr(config, "target_sigma", 0.0),
                 video_start_latents_dir=getattr(
                     config,
                     "video_start_latents_dir",

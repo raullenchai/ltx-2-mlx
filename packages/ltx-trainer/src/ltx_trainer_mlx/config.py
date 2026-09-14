@@ -456,6 +456,12 @@ class TrainingStrategyConfig(ConfigBaseModel):
         le=1,
         description="Fixed starting sigma for stage-2 terminal distillation.",
     )
+    target_sigma: float = Field(
+        default=0.0,
+        ge=0,
+        lt=1,
+        description="Target sigma for a distilled stage-2 transition; zero means terminal output.",
+    )
     video_start_latents_dir: str = "stage2_video_start_latents"
     video_terminal_latents_dir: str = "stage2_video_terminal_latents"
     audio_start_latents_dir: str = "stage2_audio_start_latents"
@@ -465,8 +471,11 @@ class TrainingStrategyConfig(ConfigBaseModel):
 
     @model_validator(mode="after")
     def validate_distillation_weights(self) -> "TrainingStrategyConfig":
-        if self.name == "stage2_terminal_distill" and self.video_loss_weight == 0 and self.audio_loss_weight == 0:
-            raise ValueError("at least one distillation loss weight must be positive")
+        if self.name == "stage2_terminal_distill":
+            if self.target_sigma >= self.sigma:
+                raise ValueError("target_sigma must be less than sigma")
+            if self.video_loss_weight == 0 and self.audio_loss_weight == 0:
+                raise ValueError("at least one distillation loss weight must be positive")
         return self
 
 

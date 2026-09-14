@@ -16,6 +16,10 @@ _SOURCES = (
     "stage2_audio_terminal_latents",
     "conditions",
 )
+_INTERMEDIATE_SOURCES = (
+    "stage2_video_intermediate_latents",
+    "stage2_audio_intermediate_latents",
+)
 
 
 def _without_batch(array: mx.array, name: str) -> mx.array:
@@ -36,6 +40,9 @@ def save_stage2_trajectory(
     video_terminal: mx.array,
     audio_start: mx.array,
     audio_terminal: mx.array,
+    video_intermediate: mx.array | None = None,
+    audio_intermediate: mx.array | None = None,
+    intermediate_sigma: float | None = None,
     video_text_embeds: mx.array,
     audio_text_embeds: mx.array,
     spatial_dims: tuple[int, int, int],
@@ -52,6 +59,17 @@ def save_stage2_trajectory(
         raise ValueError("video start and terminal shapes must match")
     if audio_start.shape != audio_terminal.shape:
         raise ValueError("audio start and terminal shapes must match")
+    intermediate_values = (video_intermediate, audio_intermediate, intermediate_sigma)
+    if any(value is not None for value in intermediate_values) and not all(
+        value is not None for value in intermediate_values
+    ):
+        raise ValueError("video, audio, and sigma intermediate values must be provided together")
+    if video_intermediate is not None and video_intermediate.shape != video_start.shape:
+        raise ValueError("video start and intermediate shapes must match")
+    if audio_intermediate is not None and audio_intermediate.shape != audio_start.shape:
+        raise ValueError("audio start and intermediate shapes must match")
+    if intermediate_sigma is not None and not 0 < intermediate_sigma < sigma:
+        raise ValueError("intermediate_sigma must be in (0, sigma)")
 
     frames, height, width = spatial_dims
     expected_video_tokens = frames * height * width
@@ -60,13 +78,14 @@ def save_stage2_trajectory(
 
     root = Path(output_root)
     precomputed = root if root.name == ".precomputed" else root / ".precomputed"
-    for source in _SOURCES:
+    sources = _SOURCES + (_INTERMEDIATE_SOURCES if video_intermediate is not None else ())
+    for source in sources:
         (precomputed / source).mkdir(parents=True, exist_ok=True)
 
     latent_name = f"latent_{index:04d}.safetensors"
     paths = {
         source: precomputed / source / (f"condition_{index:04d}.safetensors" if source == "conditions" else latent_name)
-        for source in _SOURCES
+        for source in sources
     }
     existing = [path for path in paths.values() if path.exists()]
     if existing and not overwrite:
@@ -104,6 +123,16 @@ def save_stage2_trajectory(
             "prompt_attention_mask": mx.ones((video_text_embeds.shape[1],), dtype=mx.float32),
         },
     }
+    if video_intermediate is not None and audio_intermediate is not None and intermediate_sigma is not None:
+        intermediate_metadata = {**metadata_arrays, "target_sigma": mx.array([intermediate_sigma], dtype=mx.float32)}
+        tensors["stage2_video_intermediate_latents"] = {
+            "latents": _as_bfloat16(_without_batch(video_intermediate, "video_intermediate")),
+            **intermediate_metadata,
+        }
+        audio_intermediate_unpatched = audio_patchifier.unpatchify(audio_intermediate)
+        tensors["stage2_audio_intermediate_latents"] = {
+            "latents": _as_bfloat16(_without_batch(audio_intermediate_unpatched, "audio_intermediate")),
+        }
 
     temporary: dict[str, Path] = {}
     try:

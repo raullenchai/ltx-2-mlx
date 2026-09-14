@@ -31,12 +31,27 @@ def terminal_velocity_target(
     ``velocity = noise - x0``. Euler integration from ``sigma`` to zero is
     therefore ``x_terminal = sample - sigma * velocity``.
     """
+    return transition_velocity_target(sample, terminal_sample, sigma, 0.0)
+
+
+def transition_velocity_target(
+    sample: mx.array,
+    target_sample: mx.array,
+    sigma: mx.array | float,
+    target_sigma: mx.array | float,
+) -> mx.array:
+    """Return the velocity mapping ``sample`` between two shared sigmas."""
     sigma_array = mx.array(sigma)
-    if sigma_array.size != 1:
-        raise ValueError("terminal distillation currently requires one shared sigma")
-    if float(sigma_array.item()) <= 0:
+    target_sigma_array = mx.array(target_sigma)
+    if sigma_array.size != 1 or target_sigma_array.size != 1:
+        raise ValueError("distillation requires one shared sigma transition")
+    sigma_value = float(sigma_array.item())
+    target_sigma_value = float(target_sigma_array.item())
+    if sigma_value <= 0:
         raise ValueError("sigma must be greater than zero")
-    return (sample - terminal_sample) / sigma_array
+    if not 0 <= target_sigma_value < sigma_value:
+        raise ValueError("target_sigma must be in [0, sigma)")
+    return (sample - target_sample) / (sigma_array - target_sigma_array)
 
 
 def _lora_modules(model: nn.Module) -> list[Any]:

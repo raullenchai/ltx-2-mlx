@@ -5,6 +5,7 @@ Ported from ltx-pipelines denoising loop.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import mlx.core as mx
@@ -83,6 +84,7 @@ def denoise_loop(
     video_attention_mask: mx.array | None = None,
     audio_attention_mask: mx.array | None = None,
     show_progress: bool = True,
+    step_callback: Callable[[float, mx.array, mx.array], None] | None = None,
 ) -> DenoiseOutput:
     """Run the Euler denoising loop for joint audio+video.
 
@@ -100,6 +102,8 @@ def denoise_loop(
         video_attention_mask: Attention mask for video.
         audio_attention_mask: Attention mask for audio.
         show_progress: Whether to show tqdm progress bar.
+        step_callback: Optional research hook called after each Euler step with
+            ``(sigma_next, video_latent, audio_latent)``.
 
     Returns:
         DenoiseOutput with final video and audio latents.
@@ -167,6 +171,8 @@ def denoise_loop(
 
         # Force computation for memory efficiency
         mx.async_eval(video_x, audio_x)
+        if step_callback is not None:
+            step_callback(sigma_next, video_x, audio_x)
 
     aggressive_cleanup()
 
@@ -244,9 +250,7 @@ def ancestral_euler_step(
         # Renoise from sigma_down back up to sigma_next.
         alpha_next = 1.0 - sigma_next
         alpha_down = 1.0 - sigma_down
-        renoise_coeff = mx.sqrt(
-            mx.maximum(sigma_next**2 - sigma_down**2 * alpha_next**2 / alpha_down**2, 0.0)
-        )
+        renoise_coeff = mx.sqrt(mx.maximum(sigma_next**2 - sigma_down**2 * alpha_next**2 / alpha_down**2, 0.0))
         x_next = (alpha_next / alpha_down) * x_next + noise.astype(mx.float32) * s_noise * renoise_coeff
     return x_next
 
@@ -386,12 +390,8 @@ def ancestral_denoise_loop(
             audio_noise = None
 
         # Ancestral step in float32.
-        video_next = ancestral_euler_step(
-            video_x, video_x0, sigma, sigma_next, video_noise, eta=eta, s_noise=s_noise
-        )
-        audio_next = ancestral_euler_step(
-            audio_x, audio_x0, sigma, sigma_next, audio_noise, eta=eta, s_noise=s_noise
-        )
+        video_next = ancestral_euler_step(video_x, video_x0, sigma, sigma_next, video_noise, eta=eta, s_noise=s_noise)
+        audio_next = ancestral_euler_step(audio_x, audio_x0, sigma, sigma_next, audio_noise, eta=eta, s_noise=s_noise)
 
         if draw_noise:
             # Re-apply the conditioning mask after noise injection (reference

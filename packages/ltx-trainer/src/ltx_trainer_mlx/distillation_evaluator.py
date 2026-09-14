@@ -27,17 +27,42 @@ def read_checkpoint_metadata(path: str | Path) -> dict[str, str]:
         metadata = checkpoint.metadata() or {}
     if metadata.get("distillation") != "stage2_terminal":
         raise ValueError("checkpoint is not marked as stage2_terminal distillation")
-    if int(metadata.get("stage2_steps", "0")) != 1:
-        raise ValueError("terminal checkpoint must declare stage2_steps=1")
+    steps = int(metadata.get("stage2_steps", "0"))
+    if steps not in (1, 2):
+        raise ValueError("stage-2 checkpoint must declare stage2_steps=1 or 2")
+    expected_steps = 1 if float(metadata.get("stage2_target_sigma", "0")) == 0 else 2
+    if steps != expected_steps:
+        raise ValueError("stage2_steps does not match stage2_target_sigma")
     return metadata
 
 
 def terminal_sigma_schedule(metadata: dict[str, str]) -> list[float]:
-    """Return the actual product schedule, including the terminal zero."""
+    """Return the product schedule, including an optional teacher final step."""
     sigma = float(metadata["stage2_sigma"])
+    target_sigma = float(metadata.get("stage2_target_sigma", "0"))
     if not 0 < sigma <= 1:
         raise ValueError("stage2_sigma must be in (0, 1]")
-    return [sigma, 0.0]
+    if not 0 <= target_sigma < sigma:
+        raise ValueError("stage2_target_sigma must be in [0, stage2_sigma)")
+    return [sigma, 0.0] if target_sigma == 0 else [sigma, target_sigma, 0.0]
+
+
+def _strategy_from_metadata(metadata: dict[str, str]) -> Stage2TerminalDistillStrategy:
+    schedule = terminal_sigma_schedule(metadata)
+    return Stage2TerminalDistillStrategy(
+        Stage2TerminalDistillConfig(
+            sigma=schedule[0],
+            target_sigma=schedule[1],
+            video_terminal_latents_dir=metadata.get(
+                "stage2_video_target_latents_dir",
+                "stage2_video_terminal_latents",
+            ),
+            audio_terminal_latents_dir=metadata.get(
+                "stage2_audio_target_latents_dir",
+                "stage2_audio_terminal_latents",
+            ),
+        )
+    )
 
 
 def _fuse_checkpoint(model: nn.Module, checkpoint_path: str | Path, metadata: dict[str, str]) -> None:
@@ -84,13 +109,19 @@ def load_terminal_baseline(
     model_dir: str | Path,
     *,
     sigma: float = 0.909375,
+    target_sigma: float = 0.0,
+    video_target_latents_dir: str = "stage2_video_terminal_latents",
+    audio_target_latents_dir: str = "stage2_audio_terminal_latents",
     transformer_file: str | None = None,
 ) -> tuple[nn.Module, dict[str, str]]:
     """Load the unadapted base for a one-evaluation baseline."""
     metadata = {
         "distillation": "stage2_terminal",
         "stage2_sigma": str(sigma),
-        "stage2_steps": "1",
+        "stage2_target_sigma": str(target_sigma),
+        "stage2_steps": "1" if target_sigma == 0 else "2",
+        "stage2_video_target_latents_dir": video_target_latents_dir,
+        "stage2_audio_target_latents_dir": audio_target_latents_dir,
     }
     terminal_sigma_schedule(metadata)
     return load_transformer(model_dir, transformer_file=transformer_file), metadata
@@ -106,28 +137,38 @@ def _add_batch(value: Any) -> Any:
 
 def prepare_trajectory_inputs(sample: dict[str, Any], metadata: dict[str, str]):
     """Convert one unbatched precomputed sample into transformer inputs."""
-    sigma = terminal_sigma_schedule(metadata)[0]
-    strategy = Stage2TerminalDistillStrategy(Stage2TerminalDistillConfig(sigma=sigma))
+    strategy = _strategy_from_metadata(metadata)
     return strategy.prepare_training_inputs(_add_batch(sample), sigma_sampler=None)
 
 
-def predict_terminal(model: nn.Module, inputs, sigma: float) -> tuple[mx.array, mx.array, float]:
-    """Run the student's single terminal evaluation."""
+def predict_terminal(
+    model: nn.Module,
+    inputs,
+    sigma: float,
+    target_sigma: float = 0.0,
+    video_latent: mx.array | None = None,
+    audio_latent: mx.array | None = None,
+) -> tuple[mx.array, mx.array, float]:
+    """Run the student's single distilled transition evaluation."""
     assert inputs.audio is not None
+    video_latent = inputs.video.latent if video_latent is None else video_latent
+    audio_latent = inputs.audio.latent if audio_latent is None else audio_latent
+    batch_size = video_latent.shape[0]
     start = time.perf_counter()
     video_velocity, audio_velocity = model(
-        video_latent=inputs.video.latent,
+        video_latent=video_latent,
         video_text_embeds=inputs.video.context,
         video_positions=inputs.video.positions,
-        timestep=inputs.video.sigma,
-        video_timesteps=inputs.video.timesteps,
-        audio_latent=inputs.audio.latent,
+        timestep=mx.full((batch_size,), sigma, dtype=video_latent.dtype),
+        video_timesteps=mx.full(video_latent.shape[:2], sigma, dtype=video_latent.dtype),
+        audio_latent=audio_latent,
         audio_text_embeds=inputs.audio.context,
         audio_positions=inputs.audio.positions,
-        audio_timesteps=inputs.audio.timesteps,
+        audio_timesteps=mx.full(audio_latent.shape[:2], sigma, dtype=audio_latent.dtype),
     )
-    video_pred = inputs.video.latent - sigma * video_velocity
-    audio_pred = inputs.audio.latent - sigma * audio_velocity
+    delta = sigma - target_sigma
+    video_pred = video_latent - delta * video_velocity
+    audio_pred = audio_latent - delta * audio_velocity
     mx.eval(video_pred, audio_pred)
     return video_pred, audio_pred, time.perf_counter() - start
 
@@ -156,8 +197,9 @@ def evaluate_terminal_student(
     limit: int | None = None,
 ) -> dict[str, Any]:
     """Compare one student evaluation with paired teacher terminal latents."""
-    sigma = terminal_sigma_schedule(metadata)[0]
-    strategy = Stage2TerminalDistillStrategy(Stage2TerminalDistillConfig(sigma=sigma))
+    schedule = terminal_sigma_schedule(metadata)
+    sigma, target_sigma = schedule[:2]
+    strategy = _strategy_from_metadata(metadata)
     dataset = PrecomputedDataset(str(data_root), data_sources=strategy.get_data_sources())
     count = min(len(dataset), limit) if limit is not None else len(dataset)
     if count <= 0:
@@ -167,9 +209,10 @@ def evaluate_terminal_student(
     for index in range(count):
         inputs = prepare_trajectory_inputs(dataset[index], metadata)
         assert inputs.audio is not None and inputs.audio_targets is not None
-        video_pred, audio_pred, elapsed = predict_terminal(model, inputs, sigma)
-        video_target = inputs.video.latent - sigma * inputs.video_targets
-        audio_target = inputs.audio.latent - sigma * inputs.audio_targets
+        video_pred, audio_pred, elapsed = predict_terminal(model, inputs, sigma, target_sigma)
+        delta = sigma - target_sigma
+        video_target = inputs.video.latent - delta * inputs.video_targets
+        audio_target = inputs.audio.latent - delta * inputs.audio_targets
         samples.append(
             {
                 "index": index,
@@ -185,4 +228,4 @@ def evaluate_terminal_student(
             metric: sum(sample[modality][metric] for sample in samples) / count
             for metric in ("mse", "mae", "relative_rmse", "cosine")
         }
-    return {"schedule": [sigma, 0.0], "aggregate": aggregate, "per_sample": samples}
+    return {"schedule": schedule, "aggregate": aggregate, "per_sample": samples}

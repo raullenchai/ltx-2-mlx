@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 import mlx.core as mx
 
-from ltx_trainer_mlx.distillation import terminal_velocity_target
+from ltx_trainer_mlx.distillation import transition_velocity_target
 from ltx_trainer_mlx.training_strategies.base_strategy import (
     DEFAULT_FPS,
     ModalityInputs,
@@ -17,7 +17,7 @@ from ltx_trainer_mlx.training_strategies.base_strategy import (
 
 
 class Stage2TerminalDistillConfig(TrainingStrategyConfigBase):
-    """Configuration for deterministic stage-2 ``3 -> 1`` distillation."""
+    """Configuration for deterministic stage-2 transition distillation."""
 
     name: Literal["stage2_terminal_distill"]
 
@@ -25,6 +25,7 @@ class Stage2TerminalDistillConfig(TrainingStrategyConfigBase):
         self,
         *,
         sigma: float = 0.909375,
+        target_sigma: float = 0.0,
         video_start_latents_dir: str = "stage2_video_start_latents",
         video_terminal_latents_dir: str = "stage2_video_terminal_latents",
         audio_start_latents_dir: str = "stage2_audio_start_latents",
@@ -35,11 +36,14 @@ class Stage2TerminalDistillConfig(TrainingStrategyConfigBase):
         super().__init__(name="stage2_terminal_distill")
         if not 0 < sigma <= 1:
             raise ValueError("sigma must be in (0, 1]")
+        if not 0 <= target_sigma < sigma:
+            raise ValueError("target_sigma must be in [0, sigma)")
         if video_loss_weight < 0 or audio_loss_weight < 0:
             raise ValueError("loss weights must be non-negative")
         if video_loss_weight == 0 and audio_loss_weight == 0:
             raise ValueError("at least one loss weight must be positive")
         self.sigma = sigma
+        self.target_sigma = target_sigma
         self.video_start_latents_dir = video_start_latents_dir
         self.video_terminal_latents_dir = video_terminal_latents_dir
         self.audio_start_latents_dir = audio_start_latents_dir
@@ -96,8 +100,27 @@ class Stage2TerminalDistillStrategy(TrainingStrategy):
             raise ValueError("stage-2 audio start and terminal latent shapes must match")
 
         sigma = mx.full((batch_size,), self.config.sigma, dtype=video_start.dtype)
-        video_targets = terminal_velocity_target(video_start, video_terminal, self.config.sigma)
-        audio_targets = terminal_velocity_target(audio_start, audio_terminal, self.config.sigma)
+        stored_target_sigma = video_terminal_data.get("target_sigma")
+        if stored_target_sigma is not None:
+            stored_value = float(stored_target_sigma[0].item())
+            if abs(stored_value - self.config.target_sigma) > 1e-6:
+                raise ValueError(
+                    f"trajectory target sigma {stored_value} does not match configured target sigma "
+                    f"{self.config.target_sigma}"
+                )
+
+        video_targets = transition_velocity_target(
+            video_start,
+            video_terminal,
+            self.config.sigma,
+            self.config.target_sigma,
+        )
+        audio_targets = transition_velocity_target(
+            audio_start,
+            audio_terminal,
+            self.config.sigma,
+            self.config.target_sigma,
+        )
         video_timesteps = mx.full((batch_size, video_tokens), self.config.sigma, dtype=video_start.dtype)
         audio_timesteps = mx.full(
             (batch_size, audio_start.shape[1]),
@@ -151,5 +174,8 @@ class Stage2TerminalDistillStrategy(TrainingStrategy):
         return {
             "distillation": "stage2_terminal",
             "stage2_sigma": self.config.sigma,
-            "stage2_steps": 1,
+            "stage2_target_sigma": self.config.target_sigma,
+            "stage2_steps": 1 if self.config.target_sigma == 0 else 2,
+            "stage2_video_target_latents_dir": self.config.video_terminal_latents_dir,
+            "stage2_audio_target_latents_dir": self.config.audio_terminal_latents_dir,
         }

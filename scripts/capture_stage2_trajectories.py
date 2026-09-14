@@ -50,6 +50,8 @@ def main() -> int:
                 "stage2_video_terminal_latents",
                 "stage2_audio_start_latents",
                 "stage2_audio_terminal_latents",
+                "stage2_video_intermediate_latents",
+                "stage2_audio_intermediate_latents",
             )
         ]
         expected.append(precomputed / "conditions" / f"condition_{index:04d}.safetensors")

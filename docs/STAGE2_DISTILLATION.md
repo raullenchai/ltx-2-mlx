@@ -1,4 +1,4 @@
-# Stage-2 terminal distillation
+# Stage-2 transition distillation
 
 This research path trains one LTX-2.5 transformer evaluation to reproduce the
 terminal video and audio latents of the existing deterministic three-step
@@ -21,7 +21,9 @@ python scripts/capture_stage2_trajectories.py \
 The command runs the normal eight-step ancestral stage 1 and deterministic
 three-step stage 2, but does not decode video. Each item stores the exact BF16
 stage-2 start and terminal latents, projected text conditioning, sigma, seed,
-and shape metadata in the existing `PrecomputedDataset` layout.
+and shape metadata in the existing `PrecomputedDataset` layout. New captures
+also store the teacher state at sigma `0.421875`, immediately before the final
+teacher refinement step.
 
 Capture into scratch or a managed dataset volume. Projected 1024-token video
 and audio conditioning is about 12 MiB per unique prompt before latent data,
@@ -52,6 +54,20 @@ This is a terminal jump with the exact schedule `[0.909375, 0.0]`. The normal
 `stage2_steps=1` pipeline option only truncates the original schedule to
 `[0.909375, 0.725]`; it is not interchangeable with this checkpoint.
 
+For the quality-preserving progressive experiment, copy
+`stage2_progressive_distill.yaml`. It trains one evaluation to replace the
+first two teacher evaluations:
+
+```text
+velocity_target = (stage2_start - teacher_intermediate) / (0.909375 - 0.421875)
+product schedule = [0.909375, 0.421875, 0.0]
+```
+
+The final `0.421875 -> 0` evaluation remains the unchanged base transformer.
+This reduces stage 2 from three evaluations to two while retaining a teacher
+correction step. Checkpoint metadata records the target sigma and target data
+directories so evaluation cannot silently compare against terminal latents.
+
 ## Evaluate the student
 
 Evaluate on held-out teacher trajectories before integrating inference:
@@ -75,6 +91,13 @@ impact, ambience, and synchronization coverage set.
 Omit `--checkpoint` to measure the unadapted one-evaluation baseline against
 the same teacher trajectories.
 
+For the progressive baseline, additionally pass `--target-sigma 0.421875`,
+`--video-target-dir stage2_video_intermediate_latents`, and
+`--audio-target-dir stage2_audio_intermediate_latents`. The renderer detects
+the progressive metadata, runs the distilled transition, reloads the clean
+base transformer for the final teacher step, and decodes the true terminal
+teacher/student pair.
+
 Start with rank-8 Q/K/V adapters as a capacity probe. Do not expose a trained
 adapter as a fast inference tier until it passes paired teacher/student video,
 audio, synchronization, and latency evaluation. A lower training loss alone
@@ -86,3 +109,25 @@ On the 48 GiB M4 Pro test host, rank-8 Q/K/V backward with gradient
 checkpointing measured 21.52 GiB at 468 video tokens, 31.63 GiB at 3072, and
 50.10 GiB at 6144. Use a 468 -> 1536 -> 3072-token curriculum and reserve
 6144-token full-resolution generation for validation.
+
+## Related MLX runtime survey
+
+On 2026-09-13, source inspection covered `mlx-vlm` commit
+`45d6e125ab174cc279edea417f6be734870ff161` and `omlx` commit
+`ea974149a2e6b94302cc313752402a14f73d447f`.
+
+- Neither repository contains an LTX/Lightricks model implementation or an
+  LTX-specific kernel path.
+- `mlx-vlm` diffusion support is for image models. Its attention path uses
+  MLX fast scaled-dot-product attention, which LTX already uses.
+- `omlx` native paths are specialized for autoregressive LLM/MLLM prefill,
+  query-length-one decode, Qwen shapes, MoE, or ANE offload. Those dispatch
+  assumptions do not map directly to LTX's long bidirectional audio/video
+  diffusion sequences.
+- The reusable ideas are engineering patterns: fail-closed shape/model
+  dispatch, ABI probes, an exact MLX fallback, and explicit stream/memory
+  lifecycle. They may de-risk a future hotspot kernel, but do not provide the
+  several-fold gain targeted here.
+
+The highest-leverage route therefore remains fewer transformer evaluations
+with a perceptual quality gate, not porting an LLM-serving kernel wholesale.

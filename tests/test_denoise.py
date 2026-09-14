@@ -4,14 +4,41 @@ import math
 
 import mlx.core as mx
 
+from ltx_core_mlx.conditioning.types.latent_cond import LatentState
 from ltx_pipelines_mlx.utils.samplers import (
     _compute_per_token_timesteps,
     _is_uniform_mask,
     _res2s_coefficients,
     _res2s_phi,
     _res2s_sde_coeff,
+    denoise_loop,
     euler_step,
 )
+
+
+def test_denoise_loop_reports_each_completed_transition() -> None:
+    class ZeroX0:
+        def __call__(self, **kwargs):
+            return mx.zeros_like(kwargs["video_latent"]), mx.zeros_like(kwargs["audio_latent"])
+
+    video = mx.ones((1, 2, 4))
+    audio = mx.ones((1, 1, 4))
+    video_state = LatentState(video, mx.zeros_like(video), mx.ones((1, 2, 1)))
+    audio_state = LatentState(audio, mx.zeros_like(audio), mx.ones((1, 1, 1)))
+    observed: list[tuple[float, float, float]] = []
+
+    denoise_loop(
+        model=ZeroX0(),
+        video_state=video_state,
+        audio_state=audio_state,
+        video_text_embeds=mx.zeros((1, 1, 4)),
+        audio_text_embeds=mx.zeros((1, 1, 4)),
+        sigmas=[1.0, 0.5, 0.0],
+        show_progress=False,
+        step_callback=lambda sigma, v, a: observed.append((sigma, float(v.mean()), float(a.mean()))),
+    )
+
+    assert observed == [(0.5, 0.5, 0.5), (0.0, 0.0, 0.0)]
 
 
 # ---------------------------------------------------------------------------

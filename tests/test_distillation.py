@@ -5,7 +5,12 @@ import mlx.nn as nn
 import pytest
 
 from ltx_trainer_mlx.datasets import PrecomputedDataset
-from ltx_trainer_mlx.distillation import euler_step, lora_disabled, terminal_velocity_target
+from ltx_trainer_mlx.distillation import (
+    euler_step,
+    lora_disabled,
+    terminal_velocity_target,
+    transition_velocity_target,
+)
 from ltx_trainer_mlx.distillation_evaluator import terminal_sigma_schedule
 from ltx_trainer_mlx.training_strategies.stage2_terminal_distill import (
     Stage2TerminalDistillConfig,
@@ -43,6 +48,25 @@ def test_terminal_velocity_target_reaches_teacher_terminal() -> None:
 
 def test_terminal_checkpoint_schedule_jumps_to_zero() -> None:
     assert terminal_sigma_schedule({"stage2_sigma": "0.909375"}) == [0.909375, 0.0]
+
+
+def test_progressive_checkpoint_schedule_keeps_teacher_final_step() -> None:
+    assert terminal_sigma_schedule({"stage2_sigma": "0.909375", "stage2_target_sigma": "0.421875"}) == [
+        0.909375,
+        0.421875,
+        0.0,
+    ]
+
+
+def test_transition_velocity_target_reaches_teacher_intermediate() -> None:
+    sample = mx.array([[[2.0, -1.0]]])
+    target = mx.array([[[0.25, 0.5]]])
+    sigma, target_sigma = 0.909375, 0.421875
+
+    velocity = transition_velocity_target(sample, target, sigma, target_sigma)
+    reconstructed = euler_step(sample, velocity, sigma, target_sigma)
+
+    assert mx.allclose(reconstructed, target, atol=1e-6).item()
 
 
 @pytest.mark.parametrize("sigma", [0.0, -0.1])
@@ -121,8 +145,29 @@ def test_stage2_strategy_declares_all_trajectory_sources() -> None:
     assert strategy.get_checkpoint_metadata() == {
         "distillation": "stage2_terminal",
         "stage2_sigma": 0.909375,
+        "stage2_target_sigma": 0.0,
         "stage2_steps": 1,
+        "stage2_video_target_latents_dir": "stage2_video_terminal_latents",
+        "stage2_audio_target_latents_dir": "stage2_audio_terminal_latents",
     }
+
+
+def test_stage2_progressive_strategy_targets_intermediate() -> None:
+    strategy = Stage2TerminalDistillStrategy(
+        Stage2TerminalDistillConfig(
+            target_sigma=0.421875,
+            video_terminal_latents_dir="stage2_video_intermediate_latents",
+            audio_terminal_latents_dir="stage2_audio_intermediate_latents",
+        )
+    )
+    batch = _trajectory_batch()
+    batch["video_terminal"]["target_sigma"] = mx.array([[0.421875]])
+    inputs = strategy.prepare_training_inputs(batch, sigma_sampler=None)
+
+    reconstructed = euler_step(inputs.video.latent, inputs.video_targets, 0.909375, 0.421875)
+    expected, _ = strategy._video_patchifier.patchify(batch["video_terminal"]["latents"])
+    assert mx.allclose(reconstructed, expected, atol=1e-6).item()
+    assert strategy.get_checkpoint_metadata()["stage2_steps"] == 2
 
 
 def test_stage2_strategy_rejects_trajectory_sigma_mismatch() -> None:
@@ -171,6 +216,40 @@ def test_stage2_trajectory_round_trips_through_precomputed_dataset(tmp_path) -> 
         sample["video_start"]["latents"].reshape(128, -1).T,
         video_start[0].astype(mx.bfloat16),
     ).item()
+
+
+def test_stage2_trajectory_saves_optional_intermediate(tmp_path) -> None:
+    video = mx.arange(8 * 128).reshape(1, 8, 128).astype(mx.float32)
+    audio = mx.arange(3 * 128).reshape(1, 3, 128).astype(mx.float32)
+    paths = save_stage2_trajectory(
+        tmp_path,
+        0,
+        video_start=video,
+        video_terminal=video * 0.5,
+        audio_start=audio,
+        audio_terminal=audio * 0.5,
+        video_intermediate=video * 0.75,
+        audio_intermediate=audio * 0.75,
+        intermediate_sigma=0.421875,
+        video_text_embeds=mx.zeros((1, 4, 4096)),
+        audio_text_embeds=mx.zeros((1, 4, 2048)),
+        spatial_dims=(2, 2, 2),
+        frame_rate=24.0,
+        sigma=0.909375,
+        seed=42,
+        prompt="test",
+    )
+    strategy = Stage2TerminalDistillStrategy(
+        Stage2TerminalDistillConfig(
+            target_sigma=0.421875,
+            video_terminal_latents_dir="stage2_video_intermediate_latents",
+            audio_terminal_latents_dir="stage2_audio_intermediate_latents",
+        )
+    )
+    sample = PrecomputedDataset(str(tmp_path), data_sources=strategy.get_data_sources())[0]
+
+    assert len(paths) == 7
+    assert float(sample["video_terminal"]["target_sigma"].item()) == pytest.approx(0.421875)
 
 
 def test_stage2_trajectory_refuses_partial_overwrite(tmp_path) -> None:
