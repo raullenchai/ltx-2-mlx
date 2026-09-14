@@ -4,8 +4,10 @@ import mlx.core as mx
 import mlx.nn as nn
 import pytest
 
+from ltx_pipelines_mlx.utils.samplers import ancestral_euler_step, ancestral_step_noise
 from ltx_trainer_mlx.datasets import PrecomputedDataset
 from ltx_trainer_mlx.distillation import (
+    ancestral_velocity_target,
     euler_step,
     lora_disabled,
     terminal_velocity_target,
@@ -71,6 +73,29 @@ def test_transition_velocity_target_reaches_teacher_intermediate() -> None:
     reconstructed = euler_step(sample, velocity, sigma, target_sigma)
 
     assert mx.allclose(reconstructed, target, atol=1e-6).item()
+
+
+def test_ancestral_velocity_target_reaches_teacher_intermediate() -> None:
+    sample = mx.array([[[2.0, -1.0]]])
+    target = mx.array([[[0.25, 0.5]]])
+    noise = mx.array([[[0.3, -0.2]]])
+    sigma, target_sigma = 0.975, 0.725
+
+    velocity = ancestral_velocity_target(sample, target, noise, sigma, target_sigma)
+    denoised = sample - sigma * velocity
+    reconstructed = ancestral_euler_step(sample, denoised, sigma, target_sigma, noise)
+
+    assert mx.allclose(reconstructed, target, atol=1e-6).item()
+
+
+def test_ancestral_step_noise_is_stable_by_original_step() -> None:
+    first = ancestral_step_noise(10042, 8, 4, (1, 3, 2), (1, 2, 2))
+    second = ancestral_step_noise(10042, 8, 4, (1, 3, 2), (1, 2, 2))
+    other = ancestral_step_noise(10042, 8, 5, (1, 3, 2), (1, 2, 2))
+
+    assert mx.array_equal(first[0], second[0]).item()
+    assert mx.array_equal(first[1], second[1]).item()
+    assert not mx.array_equal(first[0], other[0]).item()
 
 
 @pytest.mark.parametrize("sigma", [0.0, -0.1])

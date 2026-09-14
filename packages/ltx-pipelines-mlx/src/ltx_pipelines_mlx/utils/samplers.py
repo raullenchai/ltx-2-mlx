@@ -72,6 +72,26 @@ def _compute_per_token_timesteps(
     return (denoise_mask * sigma).squeeze(-1)
 
 
+def ancestral_step_noise(
+    noise_seed: int,
+    total_steps: int,
+    step_index: int,
+    video_shape: tuple[int, ...],
+    audio_shape: tuple[int, ...],
+) -> tuple[mx.array, mx.array]:
+    """Reproduce the video/audio noise pair for one original schedule step."""
+    if total_steps <= 0:
+        raise ValueError("total_steps must be positive")
+    if not 0 <= step_index < total_steps:
+        raise ValueError("step_index must be in [0, total_steps)")
+    step_key = mx.random.split(mx.random.key(noise_seed % (1 << 64)), total_steps)[step_index]
+    keys = mx.random.split(step_key, 2)
+    return (
+        mx.random.normal(video_shape, dtype=mx.bfloat16, key=keys[0]).astype(mx.float32),
+        mx.random.normal(audio_shape, dtype=mx.bfloat16, key=keys[1]).astype(mx.float32),
+    )
+
+
 def denoise_loop(
     model: X0Model,
     video_state: LatentState,
@@ -343,8 +363,6 @@ def ancestral_denoise_loop(
     # Reference-verbatim: one seeded generator per loop; video noise drawn
     # first, audio second. ``noise_seed=-1`` (the reference default) is
     # normalized to a valid MLX key.
-    step_keys = mx.random.split(mx.random.key(noise_seed % (1 << 64)), len(steps))
-
     draw_noise = eta > 0
     for step_idx, (sigma, sigma_next) in enumerate(iterator):
         # Build sigma / per-token timesteps (same call pattern as denoise_loop).
@@ -387,9 +405,13 @@ def ancestral_denoise_loop(
         # Fresh noise per step: bfloat16 (the latent state's dtype) like the
         # reference ``_get_plain_noise``, cast to float32 inside the step.
         if draw_noise:
-            keys = mx.random.split(step_keys[step_idx], 2)
-            video_noise = mx.random.normal(video_x.shape, dtype=mx.bfloat16, key=keys[0]).astype(mx.float32)
-            audio_noise = mx.random.normal(audio_x.shape, dtype=mx.bfloat16, key=keys[1]).astype(mx.float32)
+            video_noise, audio_noise = ancestral_step_noise(
+                noise_seed,
+                len(steps),
+                step_idx,
+                video_x.shape,
+                audio_x.shape,
+            )
         else:
             video_noise = None
             audio_noise = None

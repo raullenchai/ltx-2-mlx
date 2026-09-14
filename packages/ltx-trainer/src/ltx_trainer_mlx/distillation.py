@@ -54,6 +54,43 @@ def transition_velocity_target(
     return (sample - target_sample) / (sigma_array - target_sigma_array)
 
 
+def ancestral_velocity_target(
+    sample: mx.array,
+    target_sample: mx.array,
+    noise: mx.array,
+    sigma: float,
+    target_sigma: float,
+    *,
+    eta: float = 1.0,
+    s_noise: float = 1.0,
+) -> mx.array:
+    """Return velocity whose ancestral Euler step reaches a captured target.
+
+    The caller supplies the exact noise that the compressed runtime transition
+    will inject. Removing that known contribution from the supervised target
+    prevents the trainable velocity field from learning the runtime noise as a
+    deterministic residual.
+    """
+    if sample.shape != target_sample.shape or sample.shape != noise.shape:
+        raise ValueError("sample, target_sample, and noise shapes must match")
+    if not 0 < target_sigma < sigma <= 1:
+        raise ValueError("ancestral target requires 0 < target_sigma < sigma <= 1")
+    if not 0 <= eta <= 1 or s_noise < 0:
+        raise ValueError("eta must be in [0, 1] and s_noise must be non-negative")
+
+    downstep_ratio = 1.0 + (target_sigma / sigma - 1.0) * eta
+    sigma_down = target_sigma * downstep_ratio
+    interpolation = sigma_down / sigma
+    alpha_next = 1.0 - target_sigma
+    alpha_down = 1.0 - sigma_down
+    output_scale = alpha_next / alpha_down if eta > 0 else 1.0
+    noise_variance = max(target_sigma**2 - sigma_down**2 * alpha_next**2 / alpha_down**2, 0.0)
+    noise_scale = s_noise * noise_variance**0.5 if eta > 0 else 0.0
+    denoised = (target_sample.astype(mx.float32) - noise.astype(mx.float32) * noise_scale) / output_scale
+    denoised = (denoised - interpolation * sample.astype(mx.float32)) / (1.0 - interpolation)
+    return (sample.astype(mx.float32) - denoised) / sigma
+
+
 def _lora_modules(model: nn.Module) -> list[Any]:
     """Find LoRA-like modules without depending on a particular tuner class."""
     return [
