@@ -14,6 +14,23 @@ import pytest
 from safetensors.numpy import load_file as load_safetensors
 from safetensors.numpy import save_file as save_safetensors
 
+
+def test_training_seed_covers_python_data_shuffle() -> None:
+    """The configured seed must reproduce Python-side dataloader ordering."""
+    import random
+
+    from ltx_trainer_mlx.trainer import _seed_training_rng
+
+    _seed_training_rng(42)
+    first = list(range(16))
+    random.shuffle(first)
+
+    _seed_training_rng(42)
+    second = list(range(16))
+    random.shuffle(second)
+
+    assert first == second
+
 # ---------------------------------------------------------------------------
 # 1. TestStrategyFactory
 # ---------------------------------------------------------------------------

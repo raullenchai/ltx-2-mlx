@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import math
+import random
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -47,6 +48,12 @@ logger = logging.getLogger(__name__)
 StepCallback = Callable[[int, int, list[Path]], None]
 
 MEMORY_CHECK_INTERVAL = 200
+
+
+def _seed_training_rng(seed: int) -> None:
+    """Seed model operations and Python-side data shuffling together."""
+    mx.random.seed(seed)
+    random.seed(seed)
 
 
 def _materialize(x: Any) -> None:
@@ -111,8 +118,7 @@ class LtxvTrainer:
         train_start_time = time.time()
 
         # Set random seed
-        mx.random.seed(cfg.seed)
-        random.seed(cfg.seed)
+        _seed_training_rng(cfg.seed)
         logger.debug("Using seed: %d", cfg.seed)
 
         self._init_optimizer()
