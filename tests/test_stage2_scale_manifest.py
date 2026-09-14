@@ -55,3 +55,32 @@ def test_manifest_splitter_builds_complete_hardlinked_views(tmp_path) -> None:
     train_view = tmp_path / "splits/train/.precomputed" / LATENT_SOURCES[0] / train_source.name
     assert train_source.stat().st_ino == train_view.stat().st_ino
     assert len((tmp_path / "splits/validation/manifest.jsonl").read_text().splitlines()) == 1
+
+
+def test_manifest_splitter_can_filter_one_bucket(tmp_path) -> None:
+    data = tmp_path / "captured" / ".precomputed"
+    records = [
+        {"index": 0, "split": "train", "bucket": "468"},
+        {"index": 1, "split": "train", "bucket": "1536"},
+    ]
+    manifest = tmp_path / "manifest.jsonl"
+    manifest.write_text("".join(json.dumps(record) + "\n" for record in records))
+    for index in range(2):
+        for source in LATENT_SOURCES:
+            path = data / source / f"latent_{index:04d}.safetensors"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"latent")
+        path = data / "conditions" / f"condition_{index:04d}.safetensors"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"condition")
+
+    counts = split_dataset(
+        manifest,
+        tmp_path / "captured",
+        tmp_path / "bucket",
+        bucket="1536",
+    )
+
+    assert counts == {"train": 1}
+    assert not (tmp_path / "bucket/train/.precomputed" / LATENT_SOURCES[0] / "latent_0000.safetensors").exists()
+    assert (tmp_path / "bucket/train/.precomputed" / LATENT_SOURCES[0] / "latent_0001.safetensors").exists()

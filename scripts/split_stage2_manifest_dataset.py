@@ -18,9 +18,19 @@ LATENT_SOURCES = (
 )
 
 
-def split_dataset(manifest: Path, data_root: Path, output_root: Path) -> dict[str, int]:
+def split_dataset(
+    manifest: Path,
+    data_root: Path,
+    output_root: Path,
+    *,
+    bucket: str | None = None,
+) -> dict[str, int]:
     """Hard-link a complete capture into manifest-defined split directories."""
     records = [json.loads(line) for line in manifest.read_text().splitlines() if line.strip()]
+    if bucket is not None:
+        records = [record for record in records if str(record.get("bucket")) == bucket]
+    if not records:
+        raise ValueError("no manifest records remain after filtering")
     source_root = data_root / ".precomputed" if (data_root / ".precomputed").is_dir() else data_root
     counts: dict[str, int] = {}
     for split in {str(record["split"]) for record in records}:
@@ -56,8 +66,9 @@ def main() -> int:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--data", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--bucket", help="Create views for only one manifest bucket.")
     args = parser.parse_args()
-    counts = split_dataset(args.manifest, args.data, args.output)
+    counts = split_dataset(args.manifest, args.data, args.output, bucket=args.bucket)
     print("created " + ", ".join(f"{split}={count}" for split, count in sorted(counts.items())))
     return 0
 
