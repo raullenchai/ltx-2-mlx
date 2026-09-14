@@ -25,11 +25,26 @@ def pilot_gate(
 
     student_samples = result.get("student", {}).get("samples", [])
     baseline_samples = result.get("baseline", {}).get("samples", [])
-    if len(student_samples) == 0 or len(student_samples) != len(baseline_samples):
+    if not isinstance(student_samples, list) or not isinstance(baseline_samples, list) or not student_samples:
+        reasons.append("pilot has incomplete paired samples")
+        return reasons
+    indexed: list[dict[int, dict]] = []
+    for label, samples in (("student", student_samples), ("baseline", baseline_samples)):
+        by_index = {}
+        for sample in samples:
+            index = sample.get("index") if isinstance(sample, dict) else None
+            if isinstance(index, bool) or not isinstance(index, int) or index in by_index:
+                reasons.append(f"pilot has invalid or duplicate {label} sample index")
+                return reasons
+            by_index[index] = sample
+        indexed.append(by_index)
+    student_by_index, baseline_by_index = indexed
+    if student_by_index.keys() != baseline_by_index.keys():
         reasons.append("pilot has incomplete paired samples")
         return reasons
     allowed_ratio = 1.0 + max_sample_regression_percent / 100.0
-    for index, (student, baseline) in enumerate(zip(student_samples, baseline_samples, strict=True)):
+    for index in sorted(student_by_index):
+        student, baseline = student_by_index[index], baseline_by_index[index]
         for modality in ("video", "audio"):
             student_mse = student.get(modality, {}).get("mse")
             baseline_mse = baseline.get(modality, {}).get("mse")
