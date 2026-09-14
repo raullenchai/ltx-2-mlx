@@ -142,3 +142,17 @@ once, evaluates all four transitions against their captured held-out targets,
 then repeats the same transitions with a clean base model and reports paired
 video/audio MSE changes. Full-suite coverage after adding both tools is
 `674 passed, 22 skipped`.
+
+An opt-in Stage-1 product contract is now implemented for Atlas review. A
+`fast-stage1.json` package binds the shared adapter to the immutable base
+revision, transformer filename/config digest, exact five-sigma schedule,
+original noise-lane indices, LoRA shape/scale, runtime major, artifact SHA-256,
+and qualification revision. The distilled pipeline loads it only when
+`--fast-stage1-manifest` is supplied, rejects additional LoRAs and schedule
+overrides, and requires any composed Stage-2 package to target the same base.
+The adapter is released before Stage 2 and cannot leak into a later request.
+Absent the flag, the existing eight-step path is unchanged. This is a public
+experimental API and default/marketing decisions remain Atlas-owned. It must
+not be presented as available model functionality until a real shared adapter
+passes all quality gates. Full-suite coverage for the contract and lifecycle
+is `694 passed, 22 skipped`.

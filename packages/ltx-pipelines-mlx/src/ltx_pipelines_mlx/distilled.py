@@ -29,6 +29,7 @@ import mlx.core as mx
 
 from ltx_core_mlx.components.patchifiers import compute_video_latent_shape
 from ltx_core_mlx.conditioning.types.latent_cond import LatentState
+from ltx_core_mlx.loader.fast_stage1 import FastStage1Package, read_fast_stage1_package
 from ltx_core_mlx.loader.fast_stage2 import FastStage2Package, read_fast_stage2_package
 from ltx_core_mlx.model.transformer.model import LTXModel, X0Model
 from ltx_core_mlx.utils.memory import aggressive_cleanup
@@ -97,6 +98,8 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
         low_memory: Aggressive memory management.
         low_ram_streaming: Stream transformer blocks from disk.
         tile_count: Optional modality tiling configuration.
+        fast_stage1_manifest: Optional schema-v1 compressed Stage-1 package
+            manifest inside the model directory.
         fast_stage2_manifest: Optional schema-v1 manifest filename inside the
             model directory. Enabling it validates and runs the portable
             learned first stage-2 transition before a clean-base correction.
@@ -109,6 +112,7 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
         low_memory: bool = True,
         low_ram_streaming: bool = False,
         tile_count=None,
+        fast_stage1_manifest: str | None = None,
         fast_stage2_manifest: str | None = None,
     ):
         super().__init__(
@@ -122,11 +126,28 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
         # LTX-2.5 checkpoints sample stage 1 with the ancestral (SDE) Euler
         # sampler; the 2.3 port keeps the deterministic Euler loop.
         self.use_ancestral_sampler = should_use_ancestral_sampler(self.model_dir)
+        self._fast_stage1_package: FastStage1Package | None = None
         self._fast_stage2_package: FastStage2Package | None = None
+        if fast_stage1_manifest is not None:
+            self._fast_stage1_package = read_fast_stage1_package(self.model_dir, fast_stage1_manifest)
+            if not self.use_ancestral_sampler:
+                raise ValueError("fast stage 1 requires an LTX-2.5 ancestral checkpoint")
         if fast_stage2_manifest is not None:
             self._fast_stage2_package = read_fast_stage2_package(self.model_dir, fast_stage2_manifest)
+        if self._fast_stage1_package is not None and self._fast_stage2_package is not None:
+            stage1 = self._fast_stage1_package
+            stage2 = self._fast_stage2_package
+            if (
+                stage1.transformer_path != stage2.transformer_path
+                or stage1.contract.base_model_id != stage2.contract.base_model_id
+                or stage1.contract.base_revision != stage2.contract.base_revision
+                or stage1.contract.transformer_config_sha256 != stage2.contract.transformer_config_sha256
+            ):
+                raise ValueError("fast stage-1 and stage-2 packages target different base transformers")
 
     def _distilled_transformer_path(self) -> Path:
+        if self._fast_stage1_package is not None:
+            return self._fast_stage1_package.transformer_path
         if self._fast_stage2_package is not None:
             return self._fast_stage2_package.transformer_path
         transformer_path = self.model_dir / "transformer.safetensors"
@@ -148,7 +169,16 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
             return
 
         if self.dit is None:
-            self.dit = self._load_transformer_with_optional_streaming(self._distilled_transformer_path())
+            if self._fast_stage1_package is None:
+                self.dit = self._load_transformer_with_optional_streaming(self._distilled_transformer_path())
+            else:
+                package = self._fast_stage1_package
+                strength = package.contract.lora_alpha / package.contract.lora_rank
+                self._pending_loras = [(str(package.adapter_path), strength)]
+                try:
+                    self.dit = self._load_transformer_with_optional_streaming(package.transformer_path)
+                finally:
+                    del self._pending_loras
 
         self._load_vae_encoder()
 
@@ -269,13 +299,20 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
         Returns:
             Tuple of (video_latent, audio_latent) at full resolution.
         """
+        if self._fast_stage1_package is not None:
+            if stage1_steps is not None:
+                raise ValueError("fast stage 1 uses its qualified schedule and cannot override stage1_steps")
+            if stage1_trajectory_callback is not None:
+                raise ValueError("fast stage 1 cannot capture a standard teacher trajectory")
         if self._fast_stage2_package is not None:
             if stage2_steps is not None:
                 raise ValueError("fast stage 2 uses its qualified schedule and cannot override stage2_steps")
             if stage2_trajectory_callback is not None:
                 raise ValueError("fast stage 2 cannot capture a standard teacher trajectory")
-            if getattr(self, "_pending_loras", None):
-                raise ValueError("fast stage 2 v1 cannot be combined with additional LoRAs")
+        if (self._fast_stage1_package is not None or self._fast_stage2_package is not None) and getattr(
+            self, "_pending_loras", None
+        ):
+            raise ValueError("fast stage packages cannot be combined with additional LoRAs")
 
         # --- Text encoding (positive only — no CFG) ---
         self._load_text_encoder()
@@ -346,6 +383,13 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
         )
 
         sigmas_1 = DISTILLED_SIGMAS[: stage1_steps + 1] if stage1_steps else DISTILLED_SIGMAS
+        noise_step_indices = None
+        noise_total_steps = None
+        if self._fast_stage1_package is not None:
+            contract = self._fast_stage1_package.contract
+            sigmas_1 = list(contract.schedule)
+            noise_step_indices = list(contract.noise_step_indices)
+            noise_total_steps = contract.noise_total_steps
 
         def capture_stage1(sigma: float, video: mx.array, audio: mx.array) -> None:
             if stage1_trajectory_callback is not None:
@@ -385,6 +429,8 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
                 audio_text_embeds=audio_embeds,
                 sigmas=sigmas_1,
                 noise_seed=seed + ANCESTRAL_NOISE_SEED_OFFSET,
+                noise_step_indices=noise_step_indices,
+                noise_total_steps=noise_total_steps,
                 eta=ANCESTRAL_ETA,
                 s_noise=ANCESTRAL_S_NOISE,
                 step_callback=capture_stage1 if stage1_trajectory_callback is not None else None,
@@ -401,6 +447,15 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
                 step_callback=capture_stage1 if stage1_trajectory_callback is not None else None,
             )
         if self.low_memory:
+            aggressive_cleanup()
+
+        if self._fast_stage1_package is not None:
+            # Finish adapter-backed graphs before releasing Stage 1. The clean
+            # base or separately qualified Stage-2 adapter is loaded after
+            # upscale, which also minimizes peak memory.
+            _materialize(output_1.video_latent, output_1.audio_latent)
+            del stage1_dit, x0_model
+            self.dit = None
             aggressive_cleanup()
 
         # --- Upscale (same denorm/upsample/renorm as TI2VidTwoStagesPipeline) ---
@@ -481,7 +536,8 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
 
         if self._fast_stage2_package is not None:
             # Drop every Stage-1 model reference before loading the student.
-            del stage1_dit, x0_model
+            if self._fast_stage1_package is None:
+                del stage1_dit, x0_model
             output_2 = self._run_fast_stage2(
                 video_state_2,
                 audio_state_2,
@@ -490,6 +546,8 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
                 latent_shape=(F, H_full, W_full),
             )
         else:
+            if self.dit is None:
+                self.dit = self._load_transformer_with_optional_streaming(self._distilled_transformer_path())
             stage2_x0_model = self._stage2_model(self.dit, (F, H_full, W_full))
             output_2 = denoise_loop(
                 model=stage2_x0_model,
@@ -525,6 +583,14 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
         gen_tokens_2 = output_2.video_latent[:, : F * H_full * W_full, :]
         video_latent = self.video_patchifier.unpatchify(gen_tokens_2, (F, H_full, W_full))
         audio_latent = self.audio_patchifier.unpatchify(output_2.audio_latent)
+
+        if self._fast_stage1_package is not None:
+            # A clean Stage-2 model may now be resident. Do not accidentally
+            # reuse it as the compressed Stage-1 student on the next request.
+            _materialize(video_latent, audio_latent)
+            self.dit = None
+            self._loaded = False
+            aggressive_cleanup()
 
         return video_latent, audio_latent
 

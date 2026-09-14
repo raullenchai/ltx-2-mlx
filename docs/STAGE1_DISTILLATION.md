@@ -71,6 +71,52 @@ both splits independently selected boundaries `[0, 3, 5, 7, 8]`, or sigmas
 first four-evaluation candidate; the agreement is useful evidence but the
 sample count remains too small to serve as a quality gate.
 
+## Train and evaluate the complete candidate
+
+After the single `0 -> 3` noise-coupled pilot passes, train one shared adapter
+over all four selected transitions:
+
+```bash
+python scripts/train_stage1_compressed_curriculum.py \
+  --model /path/to/ltx-2.5-mlx-q8/snapshot \
+  --data /path/to/training/stage1-trajectories \
+  --output-root /private/tmp/LTX-stage1-compressed
+```
+
+The runner uses a fresh process per phase, requires every handoff checkpoint,
+and follows the primary pass with low-learning-rate replay over all four
+transitions. Sequential replay is only a mitigation for forgetting, not proof
+that it is absent. Evaluate every transition independently on held-out data:
+
+```bash
+python scripts/evaluate_stage1_compressed_curriculum.py \
+  --model /path/to/ltx-2.5-mlx-q8/snapshot \
+  --checkpoint /private/tmp/LTX-stage1-compressed/replay-7-8/checkpoints/lora_weights_step_00024.safetensors \
+  --data /path/to/held-out/stage1-trajectories \
+  --output /private/tmp/LTX-stage1-compressed/evaluation.json
+```
+
+Only a decoded-qualified checkpoint may be packaged. The package binds the
+adapter to an immutable base revision, transformer/config fingerprint,
+four-sigma-transition schedule, original eight-step noise lanes, artifact
+digest, and qualification revision:
+
+```bash
+python scripts/package_fast_stage1.py \
+  --model-dir /path/to/immutable/model/snapshot \
+  --checkpoint /path/to/qualified/lora.safetensors \
+  --output-dir /path/to/package \
+  --base-model-id owner/model \
+  --base-revision 0123456789abcdef0123456789abcdef01234567 \
+  --qualification-revision qual-v1
+```
+
+The opt-in runtime is `--distilled --fast-stage1-manifest fast-stage1.json`.
+It fails closed on a malformed or mismatched package and preserves the
+original Stage-1 behavior when the flag is absent. A separately qualified
+Stage-2 package can be composed with `--fast-stage2-manifest`; both packages
+must bind to the same base transformer. Neither package is enabled by default.
+
 ## Acceptance
 
 Do not productize a Stage-1 checkpoint on training loss, latent MSE or chord

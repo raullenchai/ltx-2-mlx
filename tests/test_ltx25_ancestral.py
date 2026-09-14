@@ -10,6 +10,8 @@ for 2.3.
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from types import SimpleNamespace
 
 import mlx.core as mx
 import numpy as np
@@ -419,3 +421,57 @@ class TestDistilledPipelineSamplerSelection:
             else:
                 assert calls["ancestral"] == 0, f"{version}: 2.3 must not use ancestral"
                 assert calls["deterministic"] == 2, f"{version}: both stages deterministic"
+
+    def test_fast_stage1_uses_qualified_schedule_and_original_noise_lanes(self, tmp_path, monkeypatch):
+        from ltx_pipelines_mlx.distilled import DistilledPipeline
+        from ltx_pipelines_mlx.utils.samplers import DenoiseOutput
+
+        observed = {}
+
+        def fake_ancestral(model, video_state, audio_state, **kwargs):
+            observed.update(kwargs)
+            return DenoiseOutput(video_latent=video_state.latent, audio_latent=audio_state.latent)
+
+        def fake_deterministic(model, video_state, audio_state, **kwargs):
+            return DenoiseOutput(video_latent=video_state.latent, audio_latent=audio_state.latent)
+
+        import ltx_pipelines_mlx.distilled as distilled_mod
+
+        monkeypatch.setattr(distilled_mod, "ancestral_denoise_loop", fake_ancestral)
+        monkeypatch.setattr(distilled_mod, "denoise_loop", fake_deterministic)
+        monkeypatch.setattr(distilled_mod, "aggressive_cleanup", lambda: None)
+
+        model_dir = tmp_path / "m25"
+        _write_config(model_dir, "2.5.0")
+        pipe = DistilledPipeline(str(model_dir), low_memory=False, low_ram_streaming=False)
+        pipe.verbose = False
+        pipe._fast_stage1_package = SimpleNamespace(
+            transformer_path=Path("/model/transformer-distilled.safetensors"),
+            contract=SimpleNamespace(
+                schedule=(1.0, 0.98125, 0.909375, 0.421875, 0.0),
+                noise_step_indices=(0, 3, 5, 7),
+                noise_total_steps=8,
+            ),
+        )
+        pipe._load_text_encoder = lambda: None
+        pipe._encode_text = lambda prompt: (mx.zeros((1, 2, 8)), mx.zeros((1, 2, 8)))
+        pipe.load = lambda: None
+        pipe._load_transformer_with_optional_streaming = lambda _path: object()
+        pipe.dit = object()
+        pipe.vae_encoder = _FakeVAEEncoder()
+        pipe.upsampler = _FakeUpsampler()
+
+        pipe.generate_two_stage(
+            "a cat on a mat",
+            height=32,
+            width=32,
+            num_frames=5,
+            frame_rate=24.0,
+            seed=42,
+        )
+
+        assert observed["sigmas"] == [1.0, 0.98125, 0.909375, 0.421875, 0.0]
+        assert observed["noise_step_indices"] == [0, 3, 5, 7]
+        assert observed["noise_total_steps"] == 8
+        assert pipe.dit is None
+        assert pipe._loaded is False
