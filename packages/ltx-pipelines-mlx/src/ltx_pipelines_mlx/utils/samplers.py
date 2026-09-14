@@ -296,6 +296,8 @@ def ancestral_denoise_loop(
     audio_attention_mask: mx.array | None = None,
     show_progress: bool = True,
     noise_seed: int = -1,
+    noise_step_indices: list[int] | None = None,
+    noise_total_steps: int | None = None,
     eta: float = 1.0,
     s_noise: float = 1.0,
     step_callback: Callable[[float, mx.array, mx.array], None] | None = None,
@@ -315,6 +317,10 @@ def ancestral_denoise_loop(
     - Per step, video noise is drawn first, then audio, from that seeded
       stream. In MLX this is realised with a single base key split into
       per-step keys, each split again into (video, audio) subkeys.
+    - A compressed schedule can preserve the original teacher noise stream by
+      supplying ``noise_step_indices`` together with ``noise_total_steps``.
+      For example, boundaries ``[0, 3, 5, 7, 8]`` use noise lanes
+      ``[0, 3, 5, 7]`` from the original eight-transition schedule.
     - ``eta=0`` disables noise entirely (``draw_noise=False``) — the loop then
       reduces to the deterministic Euler loop, and ``noise_seed`` has no
       effect (matches the reference's ``draw_noise=stepper.eta > 0`` gate).
@@ -337,6 +343,11 @@ def ancestral_denoise_loop(
         show_progress: Whether to show tqdm progress bar.
         noise_seed: Seed for the per-step SDE noise generator (pipeline seed +
             ``ANCESTRAL_NOISE_SEED_OFFSET`` in the distilled wiring).
+        noise_step_indices: Optional original-schedule noise lane for each
+            transition. Must be supplied together with ``noise_total_steps``
+            and contain exactly one index per transition.
+        noise_total_steps: Number of transitions in the original schedule
+            whose seeded noise stream should be reproduced.
         eta: Stochastic noise injection strength (0=deterministic, 1=maximum).
         s_noise: Noise multiplier for the injected term.
         step_callback: Optional research hook called after each completed
@@ -364,6 +375,16 @@ def ancestral_denoise_loop(
     steps = list(zip(sigmas[:-1], sigmas[1:]))
     iterator = tqdm(steps, desc="Denoising (ancestral)", disable=not show_progress)
 
+    if (noise_step_indices is None) != (noise_total_steps is None):
+        raise ValueError("noise_step_indices and noise_total_steps must be provided together")
+    if noise_step_indices is not None:
+        if noise_total_steps <= 0:
+            raise ValueError("noise_total_steps must be positive")
+        if len(noise_step_indices) != len(steps):
+            raise ValueError("noise_step_indices must contain one index per transition")
+        if any(not 0 <= index < noise_total_steps for index in noise_step_indices):
+            raise ValueError("noise_step_indices entries must be in [0, noise_total_steps)")
+
     # Whether per-token timesteps are needed (conditioning masks present).
     video_uniform = _is_uniform_mask(video_state.denoise_mask)
     audio_uniform = _is_uniform_mask(audio_state.denoise_mask)
@@ -371,7 +392,12 @@ def ancestral_denoise_loop(
     # Reference-verbatim: one seeded generator per loop; video noise drawn
     # first, audio second. ``noise_seed=-1`` (the reference default) is
     # normalized to a valid MLX key.
-    step_keys = mx.random.split(mx.random.key(noise_seed % (1 << 64)), len(steps))
+    base_key = mx.random.key(noise_seed % (1 << 64))
+    if noise_step_indices is None:
+        step_keys = mx.random.split(base_key, len(steps))
+    else:
+        original_step_keys = mx.random.split(base_key, noise_total_steps)
+        step_keys = original_step_keys[mx.array(noise_step_indices)]
     draw_noise = eta > 0
     for step_idx, (sigma, sigma_next) in enumerate(iterator):
         # Build sigma / per-token timesteps (same call pattern as denoise_loop).

@@ -108,3 +108,22 @@ form perceptual pass, not a global default-on gate. Stage 2 remains measured at
 about 206.7 seconds versus 301.5 seconds (31.4% lower latency, 1.46x); the
 projected end-to-end gain remains about 1.20-1.25x because other stages are
 unchanged.
+
+## Compressed stage-1 noise compatibility (2026-09-14)
+
+The four-transition stage-1 candidate uses teacher boundaries
+`[0, 3, 5, 7, 8]`, corresponding to sigmas
+`[1.0, 0.98125, 0.909375, 0.421875, 0.0]`. Both the eight-sample training set
+and the two-sample prompt-disjoint validation set independently ranked this
+schedule first by latent chord error. This ranking is diagnostic evidence,
+not a perceptual quality gate.
+
+`ancestral_denoise_loop` now accepts optional `noise_step_indices` and
+`noise_total_steps` so a compressed schedule can reproduce the exact seeded
+noise lanes used by the original eight-transition teacher. The candidate
+mapping is `[0, 3, 5, 7]` with `noise_total_steps=8`. Omitting both arguments
+preserves the existing sampler byte-for-byte; partial, wrong-length, and
+out-of-range mappings fail closed. The runtime primitive is covered by the
+full suite (`669 passed, 22 skipped`), but must remain unused in product
+inference until a trained stage-1 artifact passes held-out latent evaluation,
+blind decoded AV review, and cross-generation Apple Silicon qualification.

@@ -159,7 +159,16 @@ def _state(shape: tuple, seed: int) -> LatentState:
     )
 
 
-def _run_loop(seed, noise_seed, sigmas=None, eta=1.0, s_noise=1.0, model=None):
+def _run_loop(
+    seed,
+    noise_seed,
+    sigmas=None,
+    eta=1.0,
+    s_noise=1.0,
+    model=None,
+    noise_step_indices=None,
+    noise_total_steps=None,
+):
     """Run ancestral_denoise_loop with fake model + tiny states; return (out, model)."""
     video_state = _state((1, 32, 8), seed)
     audio_state = _state((1, 16, 8), seed + 1)
@@ -173,6 +182,8 @@ def _run_loop(seed, noise_seed, sigmas=None, eta=1.0, s_noise=1.0, model=None):
         sigmas=sigmas if sigmas is not None else list(DISTILLED_SIGMAS),
         show_progress=False,
         noise_seed=noise_seed,
+        noise_step_indices=noise_step_indices,
+        noise_total_steps=noise_total_steps,
         eta=eta,
         s_noise=s_noise,
     )
@@ -181,6 +192,65 @@ def _run_loop(seed, noise_seed, sigmas=None, eta=1.0, s_noise=1.0, model=None):
 
 
 class TestAncestralDenoiseLoop:
+    def test_explicit_identity_noise_mapping_preserves_default_output(self):
+        sigmas = [1.0, 0.75, 0.5, 0.0]
+        default, _ = _run_loop(42, 10042, sigmas=sigmas)
+        mapped, _ = _run_loop(
+            42,
+            10042,
+            sigmas=sigmas,
+            noise_step_indices=[0, 1, 2],
+            noise_total_steps=3,
+        )
+        assert mx.array_equal(default.video_latent, mapped.video_latent).item()
+        assert mx.array_equal(default.audio_latent, mapped.audio_latent).item()
+
+    def test_compressed_schedule_selects_original_noise_lanes(self, monkeypatch):
+        import ltx_pipelines_mlx.utils.samplers as samplers
+
+        noise_seed = 10042
+        selected_keys = []
+        original_helper = samplers._ancestral_noise_from_key
+
+        def record_key(step_key, video_shape, audio_shape):
+            selected_keys.append(np.array(step_key))
+            return original_helper(step_key, video_shape, audio_shape)
+
+        monkeypatch.setattr(samplers, "_ancestral_noise_from_key", record_key)
+        _run_loop(
+            42,
+            noise_seed,
+            sigmas=[1.0, 0.5, 0.0],
+            noise_step_indices=[3, 7],
+            noise_total_steps=8,
+        )
+
+        # The terminal transition does not draw noise; the non-terminal one
+        # must use lane 3 from the original eight-transition stream.
+        expected_key = mx.random.split(mx.random.key(noise_seed), 8)[3]
+        assert len(selected_keys) == 1
+        np.testing.assert_array_equal(selected_keys[0], np.array(expected_key))
+
+    @pytest.mark.parametrize(
+        ("indices", "total", "message"),
+        [
+            ([0, 1], None, "provided together"),
+            (None, 2, "provided together"),
+            ([0, 1], 0, "must be positive"),
+            ([0], 2, "one index per transition"),
+            ([0, 2], 2, "must be in"),
+        ],
+    )
+    def test_noise_mapping_validation(self, indices, total, message):
+        with pytest.raises(ValueError, match=message):
+            _run_loop(
+                42,
+                10042,
+                sigmas=[1.0, 0.5, 0.0],
+                noise_step_indices=indices,
+                noise_total_steps=total,
+            )
+
     def test_same_seed_is_deterministic(self):
         out1, fake1 = _run_loop(42, 42 + 10000)
         out2, fake2 = _run_loop(42, 42 + 10000)
