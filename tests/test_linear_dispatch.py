@@ -9,9 +9,10 @@ from ltx_core_mlx.model.transformer.linear import linear
 
 
 def _quantized_linear() -> nn.QuantizedLinear:
-    layer = nn.Linear(64, 32)
-    nn.quantize(layer, group_size=32, bits=8)
-    return layer
+    # ``nn.quantize`` replaces matching child modules in place; it does not
+    # convert a bare top-level Linear. Construct the quantized layer explicitly
+    # so these tests exercise the dispatch instead of silently testing Linear.
+    return nn.QuantizedLinear.from_linear(nn.Linear(64, 32), group_size=32, bits=8)
 
 
 def test_dequant_matmul_is_disabled_by_default(monkeypatch) -> None:
