@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import yaml
+from safetensors import safe_open
 
 STAGES = (
     ("468", "buckets/468/train", 100, 1.0e-4, 20),
@@ -16,6 +17,25 @@ STAGES = (
     ("3072", "buckets/3072/train", 16, 1.0e-5, 4),
     ("replay", "splits/train", 24, 1.0e-6, 6),
 )
+
+
+def validate_terminal_checkpoint(path: Path) -> None:
+    """Reject a stale checkpoint before resuming a terminal curriculum."""
+    with safe_open(path, framework="numpy") as checkpoint:
+        metadata = checkpoint.metadata() or {}
+    expected = {
+        "distillation": "stage2_terminal",
+        "stage2_sigma": "0.909375",
+        "stage2_target_sigma": "0.0",
+        "stage2_steps": "1",
+        "stage2_video_target_latents_dir": "stage2_video_terminal_latents",
+        "stage2_audio_target_latents_dir": "stage2_audio_terminal_latents",
+    }
+    for key, value in expected.items():
+        if metadata.get(key) != value:
+            raise ValueError(f"checkpoint {path} is not a compatible terminal student: {key}")
+    if int(metadata.get("lora_rank", "0")) <= 0 or float(metadata.get("lora_alpha", "0")) <= 0:
+        raise ValueError(f"checkpoint {path} does not declare a valid LoRA scale")
 
 
 def build_config(
@@ -94,6 +114,7 @@ def main() -> int:
             output = args.output_root / name
             expected = output / "checkpoints" / f"lora_weights_step_{steps:05d}.safetensors"
             if expected.is_file():
+                validate_terminal_checkpoint(expected)
                 checkpoint = expected
                 continue
             data = args.data_root / data_relative
@@ -122,6 +143,7 @@ def main() -> int:
                 )
             if not expected.is_file():
                 raise FileNotFoundError(f"training completed without expected checkpoint: {expected}")
+            validate_terminal_checkpoint(expected)
             checkpoint = expected
     except Exception:
         _write_status(args.output_root, "training-failed")
