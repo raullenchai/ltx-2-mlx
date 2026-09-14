@@ -136,5 +136,9 @@ phase runs in a fresh process, resumes from the prior adapter, writes an
 atomic status, and requires the expected checkpoint before advancing. This
 is intentionally not wired into a supervisor until the first `0 -> 3`
 noise-coupled pilot passes held-out evaluation; every transition must then be
-evaluated separately to detect catastrophic forgetting. Full-suite coverage
-after adding the curriculum is `672 passed, 22 skipped`.
+evaluated separately to detect catastrophic forgetting.
+`scripts/evaluate_stage1_compressed_curriculum.py` loads the shared student
+once, evaluates all four transitions against their captured held-out targets,
+then repeats the same transitions with a clean base model and reports paired
+video/audio MSE changes. Full-suite coverage after adding both tools is
+`674 passed, 22 skipped`.
