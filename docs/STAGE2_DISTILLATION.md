@@ -29,6 +29,46 @@ Capture into scratch or a managed dataset volume. Projected 1024-token video
 and audio conditioning is about 12 MiB per unique prompt before latent data,
 so do not place a large trajectory set in a model cache.
 
+### Frozen scale experiment
+
+The checked-in `stage2_progressive_scale_manifest.jsonl` freezes 100 requests
+at the prompt level: 80 train and 20 validation trajectories from 40/10
+disjoint prompts, with two seeds per prompt. Its bucket distribution is 60 at
+468 video tokens, 30 at 1536, and 10 at 3072. Rebuild and verify it with:
+
+```bash
+python scripts/build_stage2_scale_manifest.py \
+  --output packages/ltx-trainer/configs/stage2_progressive_scale_manifest.jsonl \
+  --overwrite
+```
+
+Capture buckets independently into the same scratch output. Global manifest
+indices make every command safely resumable and prevent collisions:
+
+```bash
+for bucket in 468 1536 3072; do
+  python scripts/capture_stage2_trajectories.py \
+    --model /path/to/ltx-2.5-mlx-q8/snapshot \
+    --manifest packages/ltx-trainer/configs/stage2_progressive_scale_manifest.jsonl \
+    --bucket "$bucket" \
+    --output /private/tmp/LTX-progressive-scale/trajectories \
+    --low-ram-streaming
+done
+```
+
+After all 700 component files exist, create hard-linked split views without
+duplicating latent storage:
+
+```bash
+python scripts/split_stage2_manifest_dataset.py \
+  --manifest packages/ltx-trainer/configs/stage2_progressive_scale_manifest.jsonl \
+  --data /private/tmp/LTX-progressive-scale/trajectories \
+  --output /private/tmp/LTX-progressive-scale/splits
+```
+
+Do not construct validation by trajectory index alone: both seeds for a prompt
+must remain in the same split to avoid prompt leakage.
+
 ## Train the student
 
 Copy `packages/ltx-trainer/configs/stage2_terminal_distill.yaml`, update the
