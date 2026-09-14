@@ -12,7 +12,10 @@ Every function takes its dependencies as arguments rather than
 
 from __future__ import annotations
 
+import json
+import os
 import sys
+import time
 import wave
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -227,15 +230,66 @@ def decode_and_save_video(
     """
     import tempfile
 
-    waveform = audio_decoder(audio_latent)
+    profile = os.environ.get("LTX2_DECODE_PROFILE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    audio_started = time.perf_counter()
+    decoder, vocoder = audio_decoder.load()
+    audio_loaded = time.perf_counter()
+    mel = decoder.decode(audio_latent)
+    if profile:
+        mx.eval(mel)
+    audio_vae_done = time.perf_counter()
+    waveform = vocoder(mel)
+    if profile:
+        mx.eval(waveform)
+    vocoder_done = time.perf_counter()
     if low_memory:
         aggressive_cleanup()
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as _tmp:
         audio_path = _tmp.name
     save_waveform(waveform, audio_path, sample_rate=48000)
+    wav_saved = time.perf_counter()
 
+    if profile:
+        print(
+            "LTX_DECODE_PROFILE "
+            + json.dumps(
+                {
+                    "component": "audio",
+                    "load_graph_s": audio_loaded - audio_started,
+                    "audio_vae_s": audio_vae_done - audio_loaded,
+                    "vocoder_bwe_s": vocoder_done - audio_vae_done,
+                    "wav_save_s": wav_saved - vocoder_done,
+                    "total_s": wav_saved - audio_started,
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+            flush=True,
+        )
+
+    video_started = time.perf_counter()
     video_decoder.decode_and_stream(video_latent, output_path, frame_rate=frame_rate, audio_path=audio_path)
+    video_done = time.perf_counter()
+
+    if profile:
+        print(
+            "LTX_DECODE_PROFILE "
+            + json.dumps(
+                {
+                    "component": "video_total",
+                    "total_s": video_done - video_started,
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+            flush=True,
+        )
 
     Path(audio_path).unlink(missing_ok=True)
     aggressive_cleanup()

@@ -24,9 +24,12 @@ via :func:`~ltx_2_mlx.model.video_vae.ops.remap_encoder_weight_keys`.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
+import sys
+import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -244,6 +247,24 @@ class VideoDecoder(nn.Module):
         Returns:
             Pixels (B, 3, F, H, W) in [-1, 1], same dtype as ``latent``.
         """
+        profile_stages = os.environ.get("LTX2_DECODE_STAGE_PROFILE", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        stage_profile: list[dict[str, Any]] = []
+
+        def materialize_stage(label: str, value: mx.array, started: float) -> None:
+            mx.eval(value)
+            stage_profile.append(
+                {
+                    "stage": label,
+                    "shape": list(value.shape),
+                    "seconds": time.perf_counter() - started,
+                }
+            )
+
         # Cast input to weights dtype and remember caller dtype to restore on
         # return. Matches Lightricks/LTX-2 PR #179 commit b604d3f — defensive
         # guard against dtype mismatch between the caller and weights.
@@ -257,10 +278,14 @@ class VideoDecoder(nn.Module):
         x = latent.transpose(0, 2, 3, 4, 1)
         x = self.denormalize_latent(x)
 
+        stage_started = time.perf_counter()
         x = self.conv_in(x)
+        if profile_stages:
+            materialize_stage("conv_in", x, stage_started)
 
         upsample_idx = 0
         for i, block in enumerate(self.up_blocks):
+            stage_started = time.perf_counter()
             x = block(x)
 
             # Apply pixel shuffle after each DepthToSpaceUpsample (odd indices)
@@ -275,8 +300,11 @@ class VideoDecoder(nn.Module):
                 if _materialize_stages:
                     # Free prior-stage activations before the next, larger stage.
                     mx.eval(x)
+            if profile_stages:
+                materialize_stage(f"up_blocks.{i}", x, stage_started)
 
         # Pre-activation PixelNorm + SiLU before final conv
+        stage_started = time.perf_counter()
         x = self.conv_out(nn.silu(pixel_norm(x)))
 
         # Final spatial unpatchify: 48 -> 3 channels, 4x spatial expansion.
@@ -284,6 +312,13 @@ class VideoDecoder(nn.Module):
         # unpatchify has channel order (c, p, r_W, q_H) — width factor before
         # height factor — which differs from DepthToSpaceUpsample's (c, p1, p2_H, p3_W).
         x = unpatchify_spatial(x, patch_size=4)
+        if profile_stages:
+            materialize_stage("conv_out_unpatchify", x, stage_started)
+            print(
+                "LTX_DECODE_STAGE_PROFILE " + json.dumps(stage_profile, sort_keys=True),
+                file=sys.stderr,
+                flush=True,
+            )
 
         # BFHWC -> BCFHW, restored to caller's dtype.
         return x.transpose(0, 4, 1, 2, 3).astype(output_dtype)
@@ -489,20 +524,36 @@ class VideoDecoder(nn.Module):
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
         assert proc.stdin is not None
 
+        profile = os.environ.get("LTX2_DECODE_PROFILE", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        profile_started = time.perf_counter()
+        vae_yield_s = 0.0
+        frame_convert_s = 0.0
+        pipe_write_s = 0.0
         frames_written = 0
         pipe_broken = False
+        chunk_requested = time.perf_counter()
         for chunk in self.tiled_decode(latent, tiling):  # (B, 3, T, H, W)
+            vae_yield_s += time.perf_counter() - chunk_requested
             if pipe_broken:
                 break
             num_frames = chunk.shape[2]
             for i in range(num_frames):
+                convert_started = time.perf_counter()
                 frame = chunk[:, :, i, :, :]
                 frame = mx.clip(frame, -1.0, 1.0)
                 frame = ((frame + 1.0) * 127.5).astype(mx.uint8)
                 frame_hwc = frame[0].transpose(1, 2, 0)  # (H, W, 3)
                 mx.eval(frame_hwc)  # required: memoryview races GPU writes without this sync
+                frame_convert_s += time.perf_counter() - convert_started
                 try:
+                    write_started = time.perf_counter()
                     proc.stdin.write(bytes(memoryview(frame_hwc)))
+                    pipe_write_s += time.perf_counter() - write_started
                 except BrokenPipeError:
                     logger.warning(
                         "ffmpeg pipe closed after %d frames (expected %d); output may be truncated",
@@ -517,10 +568,31 @@ class VideoDecoder(nn.Module):
                     aggressive_cleanup()
             del chunk
             aggressive_cleanup()
+            chunk_requested = time.perf_counter()
         if proc.stdin and not proc.stdin.closed:
             proc.stdin.close()
+        drain_started = time.perf_counter()
         proc.wait()
+        ffmpeg_drain_s = time.perf_counter() - drain_started
         aggressive_cleanup()
+        if profile:
+            print(
+                "LTX_DECODE_PROFILE "
+                + json.dumps(
+                    {
+                        "component": "video",
+                        "vae_yield_s": vae_yield_s,
+                        "frame_convert_s": frame_convert_s,
+                        "pipe_write_s": pipe_write_s,
+                        "ffmpeg_drain_s": ffmpeg_drain_s,
+                        "frames_written": frames_written,
+                        "total_s": time.perf_counter() - profile_started,
+                    },
+                    sort_keys=True,
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
 
 
 class VideoEncoder(nn.Module):

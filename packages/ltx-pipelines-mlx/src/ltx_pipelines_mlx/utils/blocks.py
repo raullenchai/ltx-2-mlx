@@ -39,11 +39,13 @@ Differences vs upstream:
 
 from __future__ import annotations
 
+import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
 
 import mlx.core as mx
+import mlx.utils
 
 from ltx_core_mlx.model.audio_vae.audio_vae import AudioVAEDecoder
 from ltx_core_mlx.model.audio_vae.bwe import VocoderWithBWE
@@ -67,6 +69,14 @@ def _resolve_model_dir(model_dir: str | Path) -> Path:
     from huggingface_hub import snapshot_download
 
     return Path(snapshot_download(str(model_dir)))
+
+
+def _configure_video_decoder_dtype(decoder: _VideoVAEDecoder, dtype_name: str) -> None:
+    """Apply the opt-in VAE decoder precision without changing pipeline tensors."""
+    if dtype_name not in {"native", "fp16"}:
+        raise ValueError("LTX2_VAE_DECODER_DTYPE must be 'native' or 'fp16'")
+    if dtype_name == "fp16":
+        decoder.update(mlx.utils.tree_map(lambda value: value.astype(mx.float16), decoder.parameters()))
 
 
 class PromptEncoder:
@@ -247,6 +257,10 @@ class VideoDecoder:
         self._decoder = _VideoVAEDecoder()
         weights = load_split_safetensors(self.model_dir / "vae_decoder.safetensors", prefix="vae_decoder.")
         self._decoder.load_weights(list(weights.items()))
+        decoder_dtype = os.environ.get("LTX2_VAE_DECODER_DTYPE", "native").strip().lower()
+        _configure_video_decoder_dtype(self._decoder, decoder_dtype)
+        if decoder_dtype != "native" and self.verbose:
+            print(f"[vae-decoder dtype={decoder_dtype}]", file=sys.stderr, flush=True)
         aggressive_cleanup()
         return self._decoder
 

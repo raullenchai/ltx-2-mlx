@@ -273,6 +273,8 @@ ltx-2-mlx info       Model info and memory estimate
 
 - `LTX2_GEMMA_EVAL_EVERY=N` — per-layer `mx.eval` cadence in the Gemma forward (default: `1`, i.e. eval every layer). Keeps each Metal command buffer below the macOS GPU watchdog (~10 s) deadline. Set to `0` on Mac Studio / M-series Ultra owners who never see the watchdog crash to recover full lazy-graph throughput.
 - `LTX2_DIT_EVAL_EVERY=N` — flush the DiT block loop every N blocks (default: `8`, splits 48 blocks into 6 command buffers). Same trade-off as above; set to `0` on machines that don't crash to maximise throughput.
+- `LTX2_VAE_DECODER_DTYPE=fp16` — cast only the video VAE decoder weights to FP16. This is an opt-in speed/capacity trade-off: output tensors retain the caller's dtype, but decoded pixels can differ slightly from the default BF16 path.
+- `LTX2_DECODE_PROFILE=1` — print JSON timing records for audio VAE, vocoder, video VAE, frame conversion, and ffmpeg output. `LTX2_DECODE_STAGE_PROFILE=1` additionally profiles each video VAE stage with synchronization barriers.
 - `LTX2_GEMMA_MAX_LENGTH=N` — cap Gemma padded sequence length (default: `1024`). Last-resort knob; quality risk on lower values because left-padded RoPE positions drift outside the LTX training distribution.
 - `LTX2_GEMMA_MAX_LENGTH=N` — cap padded Gemma sequence length (default 1024). Reducing to 512/256 speeds Gemma forward proportionally but **shifts left-padded RoPE positions** away from the LTX training distribution (quality risk). Last-resort knob.
 
