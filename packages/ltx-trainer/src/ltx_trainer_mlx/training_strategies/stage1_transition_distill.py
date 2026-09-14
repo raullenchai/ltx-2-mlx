@@ -145,6 +145,9 @@ class Stage1TransitionDistillStrategy(TrainingStrategy):
             "distillation": "stage1_transition",
             "stage1_sigma": self.config.sigma,
             "stage1_target_sigma": self.config.target_sigma,
+            "stage1_video_start_latents_dir": self.config.video_start_latents_dir,
             "stage1_video_target_latents_dir": self.config.video_terminal_latents_dir,
+            "stage1_audio_start_latents_dir": self.config.audio_start_latents_dir,
             "stage1_audio_target_latents_dir": self.config.audio_terminal_latents_dir,
+            "stage1_conditions_dir": self.config.conditions_dir,
         }
