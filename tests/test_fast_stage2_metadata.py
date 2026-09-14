@@ -26,6 +26,7 @@ def _metadata(**overrides: str) -> dict[str, str]:
         "base_revision": _REVISION,
         "transformer_file": "transformer-distilled.safetensors",
         "transformer_config_sha256": _CONFIG_SHA256,
+        "pipeline_family": "distilled_two_stage_ltx25",
         "runtime_contract_major": "1",
         "qualification_revision": "qual-v1",
     }
@@ -74,6 +75,7 @@ def test_reads_portable_fast_stage2_contract(tmp_path) -> None:
         ({"stage2_target_sigma": "0.4"}, "stage2_target_sigma does not match"),
         ({"stage2_steps": "1"}, "stage2_steps=2"),
         ({"base_revision": "main"}, "immutable hexadecimal revision"),
+        ({"pipeline_family": "other"}, "unsupported fast stage-2 pipeline family"),
         ({"runtime_contract_major": "2"}, "runtime contract is incompatible"),
     ],
 )

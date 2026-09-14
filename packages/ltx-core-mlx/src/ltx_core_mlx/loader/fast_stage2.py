@@ -27,6 +27,7 @@ class FastStage2Contract:
     base_revision: str
     transformer_file: str
     transformer_config_sha256: str
+    pipeline_family: str
     runtime_contract_major: int
     qualification_revision: str
 
@@ -226,6 +227,9 @@ def read_fast_stage2_contract(
             raise ValueError("fast stage-2 transformer config fingerprint mismatch")
 
         declared_runtime_major = int(_required(metadata, "runtime_contract_major"))
+        pipeline_family = _required(metadata, "pipeline_family")
+        if pipeline_family != "distilled_two_stage_ltx25":
+            raise ValueError(f"unsupported fast stage-2 pipeline family {pipeline_family!r}")
         if declared_runtime_major != runtime_contract_major:
             raise ValueError("fast stage-2 runtime contract is incompatible")
         qualification_revision = _required(metadata, "qualification_revision")
@@ -240,6 +244,7 @@ def read_fast_stage2_contract(
         base_revision=declared_revision,
         transformer_file=declared_transformer,
         transformer_config_sha256=declared_config_sha256,
+        pipeline_family=pipeline_family,
         runtime_contract_major=declared_runtime_major,
         qualification_revision=qualification_revision,
     )
