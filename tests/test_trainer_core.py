@@ -81,6 +81,21 @@ class TestStrategyFactory:
         assert isinstance(strategy, TextToVideoStrategy)
         assert strategy.requires_audio is True
 
+    def test_stage2_terminal_distill(self) -> None:
+        """The stage-2 config creates an audio-video terminal strategy."""
+        from ltx_trainer_mlx.config import TrainingStrategyConfig
+        from ltx_trainer_mlx.training_strategies import (
+            Stage2TerminalDistillStrategy,
+            get_training_strategy,
+        )
+
+        config = TrainingStrategyConfig(name="stage2_terminal_distill")
+        strategy = get_training_strategy(config)
+
+        assert isinstance(strategy, Stage2TerminalDistillStrategy)
+        assert strategy.requires_audio
+        assert strategy.config.sigma == 0.909375
+
 
 # ---------------------------------------------------------------------------
 # 2. TestLoraCheckpointFormat
@@ -93,6 +108,21 @@ class TestLoraCheckpointFormat:
     Simulates the save logic from trainer.py _save_checkpoint by creating
     a small nn.Module with LoRALinear layers and running the same conversion.
     """
+
+    def test_strategy_checkpoint_metadata_is_stringified(self) -> None:
+        from ltx_trainer_mlx.trainer import LtxvTrainer
+
+        trainer = object.__new__(LtxvTrainer)
+        trainer._training_strategy = type(
+            "Strategy",
+            (),
+            {"get_checkpoint_metadata": lambda _self: {"stage2_steps": 1, "sigma": 0.909375}},
+        )()
+
+        assert trainer._build_checkpoint_metadata() == {
+            "stage2_steps": "1",
+            "sigma": "0.909375",
+        }
 
     @pytest.fixture()
     def lora_checkpoint(self, tmp_path: Path) -> tuple[Path, int, int, int]:

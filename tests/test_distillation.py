@@ -4,7 +4,13 @@ import mlx.core as mx
 import mlx.nn as nn
 import pytest
 
+from ltx_trainer_mlx.datasets import PrecomputedDataset
 from ltx_trainer_mlx.distillation import euler_step, lora_disabled, terminal_velocity_target
+from ltx_trainer_mlx.training_strategies.stage2_terminal_distill import (
+    Stage2TerminalDistillConfig,
+    Stage2TerminalDistillStrategy,
+)
+from ltx_trainer_mlx.trajectory import save_stage2_trajectory
 
 
 class _Adapter(nn.Module):
@@ -55,3 +61,128 @@ def test_lora_disabled_restores_scales_after_exception() -> None:
 
     assert model.first.scale == 2.0
     assert model.nested[0].scale == 3.0
+
+
+def _trajectory_batch() -> dict:
+    video_start = mx.arange(128 * 2 * 2 * 2).reshape(1, 128, 2, 2, 2).astype(mx.float32) / 100
+    video_terminal = video_start * 0.75
+    audio_start = mx.arange(8 * 3 * 16).reshape(1, 8, 3, 16).astype(mx.float32) / 100
+    audio_terminal = audio_start * 0.5
+    return {
+        "video_start": {
+            "latents": video_start,
+            "num_frames": mx.array([2]),
+            "height": mx.array([2]),
+            "width": mx.array([2]),
+            "fps": mx.array([24.0]),
+        },
+        "video_terminal": {"latents": video_terminal},
+        "audio_start": {"latents": audio_start},
+        "audio_terminal": {"latents": audio_terminal},
+        "conditions": {
+            "video_prompt_embeds": mx.zeros((1, 4, 4096)),
+            "audio_prompt_embeds": mx.zeros((1, 4, 2048)),
+            "prompt_attention_mask": mx.ones((1, 4)),
+        },
+    }
+
+
+def test_stage2_strategy_builds_exact_terminal_targets() -> None:
+    strategy = Stage2TerminalDistillStrategy(Stage2TerminalDistillConfig())
+    batch = _trajectory_batch()
+    inputs = strategy.prepare_training_inputs(batch, sigma_sampler=None)
+
+    reconstructed_video = euler_step(inputs.video.latent, inputs.video_targets, inputs.video.sigma[0], 0.0)
+    reconstructed_audio = euler_step(inputs.audio.latent, inputs.audio_targets, inputs.audio.sigma[0], 0.0)
+    expected_video, _ = strategy._video_patchifier.patchify(batch["video_terminal"]["latents"])
+    expected_audio, _ = strategy._audio_patchifier.patchify(batch["audio_terminal"]["latents"])
+
+    assert mx.allclose(reconstructed_video, expected_video, atol=1e-6).item()
+    assert mx.allclose(reconstructed_audio, expected_audio, atol=1e-6).item()
+    assert float(strategy.compute_loss(inputs.video_targets, inputs.audio_targets, inputs).item()) == 0.0
+
+
+def test_stage2_strategy_declares_all_trajectory_sources() -> None:
+    strategy = Stage2TerminalDistillStrategy(Stage2TerminalDistillConfig())
+
+    assert strategy.requires_audio
+    assert set(strategy.get_data_sources().values()) == {
+        "video_start",
+        "video_terminal",
+        "audio_start",
+        "audio_terminal",
+        "conditions",
+    }
+    assert strategy.get_checkpoint_metadata() == {
+        "distillation": "stage2_terminal",
+        "stage2_sigma": 0.909375,
+        "stage2_steps": 1,
+    }
+
+
+def test_stage2_strategy_rejects_trajectory_sigma_mismatch() -> None:
+    strategy = Stage2TerminalDistillStrategy(Stage2TerminalDistillConfig())
+    batch = _trajectory_batch()
+    batch["video_start"]["sigma"] = mx.array([[0.725]])
+
+    with pytest.raises(ValueError, match="does not match configured sigma"):
+        strategy.prepare_training_inputs(batch, sigma_sampler=None)
+
+
+def test_stage2_trajectory_round_trips_through_precomputed_dataset(tmp_path) -> None:
+    video_start = mx.arange(2 * 2 * 2 * 128).reshape(1, 8, 128).astype(mx.float32)
+    video_terminal = video_start * 0.9
+    audio_start = mx.arange(3 * 128).reshape(1, 3, 128).astype(mx.float32)
+    audio_terminal = audio_start * 0.8
+    video_text = mx.zeros((1, 4, 4096))
+    audio_text = mx.zeros((1, 4, 2048))
+
+    paths = save_stage2_trajectory(
+        tmp_path,
+        0,
+        video_start=video_start,
+        video_terminal=video_terminal,
+        audio_start=audio_start,
+        audio_terminal=audio_terminal,
+        video_text_embeds=video_text,
+        audio_text_embeds=audio_text,
+        spatial_dims=(2, 2, 2),
+        frame_rate=24.0,
+        sigma=0.909375,
+        seed=42,
+        prompt="test prompt",
+    )
+    strategy = Stage2TerminalDistillStrategy(Stage2TerminalDistillConfig())
+    dataset = PrecomputedDataset(str(tmp_path), data_sources=strategy.get_data_sources())
+    sample = dataset[0]
+
+    assert len(paths) == 5
+    assert len(dataset) == 1
+    assert sample["video_start"]["latents"].shape == (128, 2, 2, 2)
+    assert sample["audio_start"]["latents"].shape == (8, 3, 16)
+    assert sample["video_start"]["latents"].dtype == mx.bfloat16
+    assert sample["conditions"]["video_prompt_embeds"].dtype == mx.bfloat16
+    assert mx.array_equal(
+        sample["video_start"]["latents"].reshape(128, -1).T,
+        video_start[0].astype(mx.bfloat16),
+    ).item()
+
+
+def test_stage2_trajectory_refuses_partial_overwrite(tmp_path) -> None:
+    kwargs = {
+        "video_start": mx.zeros((1, 1, 128)),
+        "video_terminal": mx.zeros((1, 1, 128)),
+        "audio_start": mx.zeros((1, 1, 128)),
+        "audio_terminal": mx.zeros((1, 1, 128)),
+        "video_text_embeds": mx.zeros((1, 1, 4096)),
+        "audio_text_embeds": mx.zeros((1, 1, 2048)),
+        "spatial_dims": (1, 1, 1),
+        "frame_rate": 24.0,
+        "sigma": 0.909375,
+        "seed": 42,
+        "prompt": "test",
+    }
+    save_stage2_trajectory(tmp_path, 0, **kwargs)
+
+    with pytest.raises(FileExistsError, match="already has 5"):
+        save_stage2_trajectory(tmp_path, 0, **kwargs)

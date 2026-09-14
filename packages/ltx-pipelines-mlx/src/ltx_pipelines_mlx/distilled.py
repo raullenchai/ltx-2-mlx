@@ -21,6 +21,7 @@ For dev model + CFG quality, see :class:`TI2VidTwoStagesPipeline` /
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import mlx.core as mx
@@ -154,6 +155,7 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
         stage2_steps: int | None = None,
         image: str | None = None,
         images=None,
+        stage2_trajectory_callback: Callable[..., None] | None = None,
         **_unused_kwargs,
     ) -> tuple[mx.array, mx.array]:
         """Generate video using the distilled two-stage pipeline.
@@ -167,6 +169,9 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
             stage1_steps: Stage 1 steps (default: full DISTILLED_SIGMAS = 8).
             stage2_steps: Stage 2 steps (default: full STAGE_2_SIGMAS = 3).
             image: Optional reference image for I2V conditioning.
+            stage2_trajectory_callback: Optional research callback invoked with
+                the exact stage-2 start/terminal video and audio tokens plus
+                text conditioning. The default ``None`` has no runtime effect.
             **_unused_kwargs: Accepted (and ignored) for signature compatibility
                 with :meth:`TI2VidTwoStagesPipeline.generate_two_stage`. CFG / STG /
                 TeaCache flags don't apply to the distilled flow.
@@ -364,6 +369,20 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
             audio_text_embeds=audio_embeds,
             sigmas=sigmas_2,
         )
+        if stage2_trajectory_callback is not None:
+            stage2_trajectory_callback(
+                video_start=video_state_2.latent,
+                video_terminal=output_2.video_latent,
+                audio_start=audio_state_2.latent,
+                audio_terminal=output_2.audio_latent,
+                video_text_embeds=video_embeds,
+                audio_text_embeds=audio_embeds,
+                spatial_dims=(F, H_full, W_full),
+                frame_rate=frame_rate,
+                sigma=start_sigma,
+                seed=seed,
+                prompt=prompt,
+            )
         if self.low_memory:
             aggressive_cleanup()
 

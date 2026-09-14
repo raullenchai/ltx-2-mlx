@@ -816,12 +816,20 @@ class LtxvTrainer:
                     key = key[: -len(".lora_b")] + ".lora_B.weight"
                     param = mx.transpose(param)
                 state_dict[key] = np.array(param.astype(mx.float32))
-            save_safetensors(state_dict, str(saved_path))
+            save_safetensors(
+                state_dict,
+                str(saved_path),
+                metadata=self._build_checkpoint_metadata(),
+            )
         else:
             state_dict = {}
             for name, param in nn.utils.tree_flatten(self._transformer.parameters()):
                 state_dict[name] = np.array(param)
-            save_safetensors(state_dict, str(saved_path))
+            save_safetensors(
+                state_dict,
+                str(saved_path),
+                metadata=self._build_checkpoint_metadata(),
+            )
 
         logger.info(
             "%s weights for step %d saved in %s",
@@ -833,6 +841,10 @@ class LtxvTrainer:
         self._checkpoint_paths.append(saved_path)
         self._cleanup_checkpoints()
         return saved_path
+
+    def _build_checkpoint_metadata(self) -> dict[str, str]:
+        """Return strategy metadata converted for safetensors."""
+        return {key: str(value) for key, value in self._training_strategy.get_checkpoint_metadata().items()}
 
     def _cleanup_checkpoints(self) -> None:
         """Clean up old checkpoints."""

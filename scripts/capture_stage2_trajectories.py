@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Capture deterministic stage-2 teacher trajectories without decoding video."""
+
+from __future__ import annotations
+
+import argparse
+from functools import partial
+from pathlib import Path
+
+from ltx_pipelines_mlx.distilled import DistilledPipeline
+from ltx_trainer_mlx.trajectory import save_stage2_trajectory
+
+
+def _read_prompts(path: Path) -> list[str]:
+    prompts = [line.strip() for line in path.read_text().splitlines() if line.strip()]
+    if not prompts:
+        raise ValueError(f"no prompts found in {path}")
+    return prompts
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--prompts", type=Path, required=True, help="One prompt per non-empty line.")
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--width", type=int, default=192)
+    parser.add_argument("--height", type=int, default=192)
+    parser.add_argument("--frames", type=int, default=97)
+    parser.add_argument("--frame-rate", type=float, default=24.0)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--limit", type=int)
+    parser.add_argument("--low-ram-streaming", action="store_true")
+    args = parser.parse_args()
+
+    prompts = _read_prompts(args.prompts)
+    if args.limit is not None:
+        prompts = prompts[: args.limit]
+
+    pipeline = DistilledPipeline(
+        args.model,
+        low_memory=True,
+        low_ram_streaming=args.low_ram_streaming,
+    )
+    for index, prompt in enumerate(prompts):
+        callback = partial(save_stage2_trajectory, args.output, index)
+        pipeline.generate_two_stage(
+            prompt,
+            height=args.height,
+            width=args.width,
+            num_frames=args.frames,
+            frame_rate=args.frame_rate,
+            seed=args.seed + index,
+            stage2_trajectory_callback=callback,
+        )
+        print(f"captured trajectory {index + 1}/{len(prompts)}")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

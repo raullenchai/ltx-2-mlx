@@ -1,0 +1,58 @@
+# LTX-2.5 deterministic stage-2 3 -> 1 distillation pilot.
+# See docs/STAGE2_DISTILLATION.md before collecting data or training.
+
+model:
+  model_path: ~/.cache/huggingface/hub/models--MrMofer--ltx-2.5-mlx-q8/snapshots/latest
+  transformer_file: transformer-distilled.safetensors
+  training_mode: lora
+
+lora:
+  rank: 8
+  alpha: 8
+  dropout: 0.0
+  target_modules:
+    - to_q
+    - to_k
+    - to_v
+
+optimization:
+  learning_rate: 1.0e-4
+  steps: 500
+  batch_size: 1
+  gradient_accumulation_steps: 1
+  max_grad_norm: 1.0
+  weight_decay: 0.0
+  enable_gradient_checkpointing: true
+  scheduler_type: linear
+  scheduler_params:
+    start_factor: 1.0
+    end_factor: 0.1
+
+data:
+  preprocessed_data_root: ./stage2-trajectories
+
+training_strategy:
+  name: stage2_terminal_distill
+  sigma: 0.909375
+  video_loss_weight: 1.0
+  audio_loss_weight: 1.0
+
+flow_matching:
+  # Ignored by this fixed-sigma strategy, retained for shared config schema.
+  timestep_sampling_mode: uniform
+
+validation:
+  # Normal validation does not yet load the one-step schedule; use the paired
+  # teacher/student evaluator before enabling a product tier.
+  prompts: []
+  interval: null
+  generate_audio: true
+
+checkpoints:
+  interval: 50
+  keep_last_n: 3
+  precision: bfloat16
+
+seed: 42
+output_dir: ./outputs/stage2_terminal_distill
+

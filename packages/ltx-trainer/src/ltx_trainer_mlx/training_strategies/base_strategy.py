@@ -40,7 +40,7 @@ class TrainingStrategyConfigBase:
         name: Unique name identifying the training strategy type.
     """
 
-    name: Literal["text_to_video", "video_to_video"]
+    name: Literal["text_to_video", "video_to_video", "stage2_terminal_distill"]
 
     def __init__(self, name: str) -> None:
         self.name = name

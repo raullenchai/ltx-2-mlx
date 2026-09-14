@@ -440,7 +440,7 @@ class TrainingStrategyConfig(ConfigBaseModel):
     when video-to-video and other strategies are ported.
     """
 
-    name: Literal["text_to_video", "video_to_video"] = Field(
+    name: Literal["text_to_video", "video_to_video", "stage2_terminal_distill"] = Field(
         default="text_to_video",
         description="Training strategy name.",
     )
@@ -449,6 +449,25 @@ class TrainingStrategyConfig(ConfigBaseModel):
         default=True,
         description="Whether to train the audio branch alongside video.",
     )
+
+    sigma: float = Field(
+        default=0.909375,
+        gt=0,
+        le=1,
+        description="Fixed starting sigma for stage-2 terminal distillation.",
+    )
+    video_start_latents_dir: str = "stage2_video_start_latents"
+    video_terminal_latents_dir: str = "stage2_video_terminal_latents"
+    audio_start_latents_dir: str = "stage2_audio_start_latents"
+    audio_terminal_latents_dir: str = "stage2_audio_terminal_latents"
+    video_loss_weight: float = Field(default=1.0, ge=0)
+    audio_loss_weight: float = Field(default=1.0, ge=0)
+
+    @model_validator(mode="after")
+    def validate_distillation_weights(self) -> "TrainingStrategyConfig":
+        if self.name == "stage2_terminal_distill" and self.video_loss_weight == 0 and self.audio_loss_weight == 0:
+            raise ValueError("at least one distillation loss weight must be positive")
+        return self
 
 
 class LtxTrainerConfig(ConfigBaseModel):
