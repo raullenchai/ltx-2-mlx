@@ -309,3 +309,22 @@ segmented Stage 1 or its downstream interaction rather than terminal Stage 2
 alone. Stop spending qualification compute on these three adapters. Preserve
 the portable runtime/package infrastructure, but retrain Stage 1 with broader
 semantic/distribution coverage before restarting decoded gates.
+
+Code inspection found a nearer-term confound before changing the objective:
+the three packaged "segmented" checkpoints came from a sequential shared
+curriculum. `3 -> 5` loaded the `0 -> 3` adapter and `5 -> 7` loaded both prior
+updates, even though runtime later applied each file to only one span. Upstream
+`d524c95` adds genuinely independent span-v2 training from the clean base and
+marks that provenance in checkpoint metadata. The segmented package builder
+now rejects cumulative/shared checkpoints. Full tests pass: `770 passed, 22
+skipped`; scoped Ruff and diff checks pass.
+
+MZR-3 is running the independent three-segment control against the same eight
+training trajectories. Each phase retains only its final checkpoint to fit the
+host's 1 GiB free-space constraint; no archived or source data was deleted.
+This isolates cumulative weight interference before paying for broader capture
+or a distribution-level objective. The current training cohort remains a major
+coverage risk: it has only eight samples from four duplicated prompts (watch,
+assembly robot, rain, candle), no human face or speech, plus two owl validation
+samples. Even if independence repairs the chef case, broader prompt/seed
+capture remains mandatory before product qualification.
