@@ -374,3 +374,17 @@ noise coupling but uses the immutable base transformer for those transitions,
 allowing same-prompt decoded attribution to early, middle, or late adapter
 corrections. The option is intentionally unavailable through the product CLI
 and rejects non-diagnostic qualification revisions.
+
+### Exact-prefix product-path qualification update
+
+The real product CLI completed three additional 10-second, 768x512x241
+prompts: cafe faces/hands/dialogue in 269.76 seconds, mountain-bike fast motion
+in 269.25 seconds, and four synchronized chisel impacts in 268.97 seconds.
+All used zero swap and 39.51-40.42 GB peak process footprint. Against the
+identity-verified 539.94-second standard reference at this shape, this is
+2.001-2.008x. Contact-sheet inspection retained every requested subject and
+coarse action, but full-speed detail, dialogue/lip sync, impact sync, and audio
+level still require human review. The impact candidate was about 5.3 dB
+quieter than its standard sample. Keep the capability opt-in and describe it
+as approximately 2x until human review and a second Apple Silicon generation
+pass.

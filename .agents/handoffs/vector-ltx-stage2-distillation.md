@@ -504,3 +504,18 @@ with a direct bypass regression test. The full suite passes 803 with 22 skips.
 The independent reviewer service on `spark2` could not start because its Codex
 refresh token is revoked; it posted no PR comment and must be reauthenticated
 before the automated review loop can grant LGTM.
+
+The real product CLI has now also completed three broader 768x512x241 cases:
+cafe faces/hands/dialogue in 269.76 seconds, mountain-bike fast motion in
+269.25 seconds, and four-impact synchronization in 268.97 seconds. All used
+zero swap; peak process footprint ranged from 39.51 to 40.42 GB. Sampled
+frames preserve requested subjects and coarse actions. A simple transient
+screen found the first four candidate impact attacks at
+0.56/1.04/1.52/2.36 seconds versus 0.56/1.06/1.64/2.28 for standard, but the
+candidate was about 5.3 dB quieter and human A/V review remains authoritative.
+Artifacts are under `123/strategy/ltx-exact-prefix-suite-2026-09-15/`.
+
+Next: owner reviews the three side-by-sides and audio files; Vector repeats the
+same immutable artifact on a second Apple Silicon generation; Atlas decides
+default/public integration only after those pass; reauthenticate `spark2` and
+rerun the PR review loop. Do not upload or default the diagnostic artifact.
