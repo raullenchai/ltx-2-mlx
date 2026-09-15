@@ -109,6 +109,7 @@ def _read_segment(
             "stage1_audio_start_latents_dir": f"stage1_audio_step_{start:02d}",
             "stage1_audio_target_latents_dir": f"stage1_audio_step_{end:02d}",
             "stage1_curriculum_noise_coupling": "span-v2",
+            "stage1_curriculum_adapter_mode": "independent",
             "stage1_sampler": "ancestral_span_v2",
             "stage1_noise_step_index": str(start),
             "stage1_noise_step_end_index": str(end),

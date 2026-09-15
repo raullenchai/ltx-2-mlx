@@ -5,6 +5,7 @@ import json
 
 import numpy as np
 import pytest
+from safetensors import safe_open
 from safetensors.numpy import save_file
 
 from ltx_core_mlx.loader.fast_stage1_segmented import read_fast_stage1_segmented_package
@@ -37,6 +38,7 @@ def _write_package(tmp_path):
                 "stage1_audio_start_latents_dir": f"stage1_audio_step_{start:02d}",
                 "stage1_audio_target_latents_dir": f"stage1_audio_step_{end:02d}",
                 "stage1_curriculum_noise_coupling": "span-v2",
+                "stage1_curriculum_adapter_mode": "independent",
                 "stage1_sampler": "ancestral_span_v2",
                 "stage1_noise_step_index": str(start),
                 "stage1_noise_step_end_index": str(end),
@@ -100,6 +102,7 @@ def _write_exact_prefix_package(tmp_path):
         "stage1_audio_start_latents_dir": "stage1_audio_step_03",
         "stage1_audio_target_latents_dir": "stage1_audio_step_07",
         "stage1_curriculum_noise_coupling": "span-v2",
+        "stage1_curriculum_adapter_mode": "independent",
         "stage1_sampler": "ancestral_span_v2",
         "stage1_noise_step_index": "3",
         "stage1_noise_step_end_index": "7",
@@ -208,6 +211,22 @@ def test_rejects_segment_with_wrong_curriculum_metadata(tmp_path) -> None:
     path.write_text(json.dumps(manifest))
 
     with pytest.raises(ValueError, match="incompatible stage1_sigma"):
+        read_fast_stage1_segmented_package(tmp_path)
+
+
+def test_loader_rejects_cumulative_checkpoint_even_with_matching_manifest(tmp_path) -> None:
+    path, manifest = _write_exact_prefix_package(tmp_path)
+    segment = tmp_path / manifest["segments"][0]["adapter_file"]
+    with safe_open(segment, framework="numpy") as source:
+        names = source.keys()
+        tensors = {name: source.get_tensor(name) for name in names}
+        metadata = dict(source.metadata() or {})
+    metadata["stage1_curriculum_adapter_mode"] = "shared"
+    save_file(tensors, segment, metadata=metadata)
+    manifest["segments"][0]["adapter_sha256"] = hashlib.sha256(segment.read_bytes()).hexdigest()
+    path.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="stage1_curriculum_adapter_mode"):
         read_fast_stage1_segmented_package(tmp_path)
 
 

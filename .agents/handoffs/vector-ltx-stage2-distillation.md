@@ -494,3 +494,13 @@ matches the prior 270.01-second research-path combined render. Across the two
 combined runs, the range is 269.21-270.01 seconds and the median is 269.61
 seconds (about 2.001x). Because the range straddles the strict 269.97-second 2x
 boundary, describe the result as approximately 2x, not stably greater than 2x.
+
+Adversarial self-review found that the packager enforced clean-base independent
+training provenance but the loader did not repeat that check. A hand-crafted
+manifest with a matching digest could therefore admit a cumulative/shared
+checkpoint. The loader now requires
+`stage1_curriculum_adapter_mode=independent` for every segmented capability,
+with a direct bypass regression test. The full suite passes 803 with 22 skips.
+The independent reviewer service on `spark2` could not start because its Codex
+refresh token is revoked; it posted no PR comment and must be reauthenticated
+before the automated review loop can grant LGTM.
