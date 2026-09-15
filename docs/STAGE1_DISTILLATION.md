@@ -207,7 +207,10 @@ python scripts/train_stage1_segmented_curriculum.py \
 
 Use `--span 0-3` (or another bound span) for a targeted data/objective
 control. This is useful on constrained hosts because it retains only the final
-checkpoint for each selected span. Evaluate the complete set only on its bound
+checkpoint for each selected span. When a larger cohort makes the default
+budget an underfit control, `--steps N` may override the budget only when
+exactly one `--span` is selected; use a fresh output root so the different
+budgets cannot be confused. Evaluate the complete set only on its bound
 transitions:
 
 ```bash

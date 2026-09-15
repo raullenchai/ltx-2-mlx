@@ -15,6 +15,7 @@ from scripts.train_stage1_compressed_curriculum import (
     require_phase_checkpoint,
     validate_phase_checkpoint,
 )
+from scripts.train_stage1_segmented_curriculum import select_segment_phases
 
 
 def test_evaluator_supports_direct_script_entrypoint(tmp_path: Path) -> None:
@@ -93,6 +94,23 @@ def test_segmented_trainer_exposes_single_span_control(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert "--span {0-3,3-5,5-7}" in result.stdout
+    assert "--steps STEPS" in result.stdout
+
+
+def test_segmented_trainer_can_scale_one_span_budget() -> None:
+    phases = select_segment_phases(["0-3"], 600)
+
+    assert len(phases) == 1
+    assert phases[0].name == "primary-0-3"
+    assert phases[0].steps == 600
+    assert phases[0].checkpoint_interval == 600
+
+    with pytest.raises(ValueError, match="exactly one"):
+        select_segment_phases(None, 600)
+    with pytest.raises(ValueError, match="exactly one"):
+        select_segment_phases(["0-3", "3-5"], 600)
+    with pytest.raises(ValueError, match="positive"):
+        select_segment_phases(["0-3"], 0)
 
 
 def test_curriculum_uses_selected_boundaries_and_original_noise_lanes() -> None:

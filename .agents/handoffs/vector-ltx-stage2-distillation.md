@@ -368,3 +368,7 @@ The valid chef standard is `case-05/sample-05-teacher.mp4`; all conclusions
 above use that same-prompt, same-seed pair. The broad 24-prompt `0 -> 3`
 control is now capturing trajectories. Its condition files are verified hard
 links by inode; fresh Stage-1 boundaries are only about 0.5 MiB per sample.
+The targeted independent trainer also supports a fail-closed `--steps N`
+override only when exactly one `--span` is selected. If the first 100-step
+broad run is underfit, use a fresh output root for an equal-exposure control;
+do not overwrite or relabel the 100-step checkpoint.

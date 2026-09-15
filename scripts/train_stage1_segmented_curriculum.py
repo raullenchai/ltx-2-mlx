@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import yaml
@@ -13,6 +14,7 @@ import yaml
 try:
     from scripts.train_stage1_compressed_curriculum import (
         PRIMARY_PHASES,
+        Phase,
         _write_status,
         build_config,
         require_phase_checkpoint,
@@ -20,6 +22,7 @@ try:
 except ModuleNotFoundError:  # Direct script execution.
     from train_stage1_compressed_curriculum import (  # type: ignore[no-redef]
         PRIMARY_PHASES,
+        Phase,
         _write_status,
         build_config,
         require_phase_checkpoint,
@@ -27,6 +30,23 @@ except ModuleNotFoundError:  # Direct script execution.
 
 
 SEGMENT_PHASES = PRIMARY_PHASES[:3]
+
+
+def select_segment_phases(spans: list[str] | None, steps: int | None = None) -> tuple[Phase, ...]:
+    """Select independent spans and optionally override one control's budget."""
+    selected = set(spans or ())
+    phases = tuple(
+        phase
+        for phase in SEGMENT_PHASES
+        if not selected or f"{phase.start_index}-{phase.target_index}" in selected
+    )
+    if steps is None:
+        return phases
+    if steps <= 0:
+        raise ValueError("--steps must be positive")
+    if len(selected) != 1 or len(phases) != 1:
+        raise ValueError("--steps requires exactly one --span")
+    return (replace(phases[0], steps=steps, checkpoint_interval=steps),)
 
 
 def main() -> int:
@@ -41,14 +61,17 @@ def main() -> int:
         choices=tuple(f"{phase.start_index}-{phase.target_index}" for phase in SEGMENT_PHASES),
         help="Train only the selected span; repeat for multiple spans (default: all three)",
     )
+    parser.add_argument(
+        "--steps",
+        type=int,
+        help="Override the training budget for exactly one selected span",
+    )
     args = parser.parse_args()
 
-    selected = set(args.span or ())
-    phases = tuple(
-        phase
-        for phase in SEGMENT_PHASES
-        if not selected or f"{phase.start_index}-{phase.target_index}" in selected
-    )
+    try:
+        phases = select_segment_phases(args.span, args.steps)
+    except ValueError as exc:
+        parser.error(str(exc))
     args.output_root.mkdir(parents=True, exist_ok=True)
     try:
         for phase in phases:
