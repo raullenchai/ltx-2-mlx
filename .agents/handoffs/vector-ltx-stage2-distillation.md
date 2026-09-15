@@ -405,3 +405,20 @@ it must substantially exceed that reference and restore the held-out chef or
 the next objective should weight semantic/perceptual error rather than train
 another ordinary-MSE downstream span. Full tests pass: `791 passed, 22
 skipped`. Public/default integration remains blocked and belongs to Atlas.
+
+The first matched on-policy control failed its compute gate: the new rank-4
+`3 -> 5` adapter improved shifted-input video/audio MSE by 47.43%/38.34%,
+worse than the old teacher-forced adapter's 51.40%/47.08%. It was not decoded,
+and `5 -> 7` training did not start. The sharper issue is target reachability:
+that control asked a student boundary to jump to the original teacher boundary,
+instead of asking the clean teacher where it would go from the student's actual
+state.
+
+`materialize_stage1_teacher_correction.py` now runs every original clean-teacher
+fine step from an arbitrary student boundary with the matching original noise
+lanes. A teacher-boundary `3 -> 5` smoke reproduced the captured target to
+video/audio MSE `3.26e-10`/`7.38e-11`; only 5 of 27,904 stored bfloat16 values
+differed, with maximum absolute difference 0.001953125. It then generated 48
+train and 12 validation reachable targets in 193.35/47.58 seconds. The sole
+rank-4 teacher-corrected control is running. Full tests pass: `793 passed, 22
+skipped`. Do not decode unless it beats the prior latent references.

@@ -105,7 +105,12 @@ def _hardlink_dataset_view(source: Path, output: Path, excluded_sources: set[str
         for path in sorted(source_root.iterdir()):
             if path.name == ".precomputed":
                 continue
-            if path.name in {".rollout-incomplete.json", "student-rollout.json"}:
+            if path.name in {
+                ".rollout-incomplete.json",
+                ".teacher-correction-incomplete.json",
+                "student-rollout.json",
+                "teacher-correction.json",
+            }:
                 continue
             if path.is_symlink() or not path.is_file():
                 continue

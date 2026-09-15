@@ -24,6 +24,8 @@ def test_hardlink_view_excludes_only_replaced_boundary(tmp_path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
     (tmp_path / "source/manifest.jsonl").write_text('{"index":0}\n')
+    (tmp_path / "source/student-rollout.json").write_text("old report\n")
+    (tmp_path / "source/teacher-correction.json").write_text("old correction\n")
 
     linked = _hardlink_dataset_view(
         tmp_path / "source",
@@ -37,6 +39,8 @@ def test_hardlink_view_excludes_only_replaced_boundary(tmp_path: Path) -> None:
     later = tmp_path / "output/.precomputed/stage1_video_step_05/latent_0000.safetensors"
     assert later.stat().st_ino == (source / "stage1_video_step_05/latent_0000.safetensors").stat().st_ino
     assert (tmp_path / "output/manifest.jsonl").stat().st_ino == (tmp_path / "source/manifest.jsonl").stat().st_ino
+    assert not (tmp_path / "output/student-rollout.json").exists()
+    assert not (tmp_path / "output/teacher-correction.json").exists()
 
 
 def test_hardlink_view_rejects_existing_output(tmp_path: Path) -> None:
