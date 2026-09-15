@@ -96,6 +96,14 @@ def validate_phase_checkpoint(path: Path, phase: Phase, noise_coupling: str = "l
             raise ValueError(f"checkpoint {path} does not match {phase.name}: ancestral noise span")
 
 
+def require_phase_checkpoint(path: Path, phase: Phase, noise_coupling: str) -> Path:
+    """Require and validate one curriculum handoff under its selected coupling."""
+    if not path.is_file():
+        raise FileNotFoundError(f"training completed without expected checkpoint: {path}")
+    validate_phase_checkpoint(path, phase, noise_coupling)
+    return path
+
+
 def build_config(
     *,
     phase: Phase,
@@ -192,8 +200,7 @@ def main() -> int:
             output = args.output_root / phase.name
             expected = output / "checkpoints" / f"lora_weights_step_{phase.steps:05d}.safetensors"
             if expected.is_file():
-                validate_phase_checkpoint(expected, phase, args.noise_coupling)
-                checkpoint = expected
+                checkpoint = require_phase_checkpoint(expected, phase, args.noise_coupling)
                 continue
             output.mkdir(parents=True, exist_ok=True)
             config = build_config(
@@ -215,10 +222,7 @@ def main() -> int:
                     stderr=subprocess.STDOUT,
                     check=True,
                 )
-            if not expected.is_file():
-                raise FileNotFoundError(f"training completed without expected checkpoint: {expected}")
-            validate_phase_checkpoint(expected, phase)
-            checkpoint = expected
+            checkpoint = require_phase_checkpoint(expected, phase, args.noise_coupling)
     except Exception:
         _write_status(args.output_root, "training-failed")
         raise

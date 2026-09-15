@@ -9,6 +9,7 @@ from scripts.train_stage1_compressed_curriculum import (
     PRIMARY_PHASES,
     REPLAY_PHASES,
     build_config,
+    require_phase_checkpoint,
     validate_phase_checkpoint,
 )
 
@@ -122,3 +123,30 @@ def test_phase_checkpoint_validation_rejects_stale_transition(tmp_path) -> None:
     save_file({"weight": np.zeros((1,), dtype=np.float32)}, checkpoint, metadata=metadata)
     with pytest.raises(ValueError, match="stage1_target_sigma"):
         validate_phase_checkpoint(checkpoint, phase)
+
+
+def test_fresh_span_checkpoint_is_validated_with_selected_coupling(tmp_path) -> None:
+    phase = PRIMARY_PHASES[0]
+    metadata = {
+        "distillation": "stage1_transition",
+        "stage1_sigma": "1.0",
+        "stage1_target_sigma": "0.98125",
+        "stage1_video_start_latents_dir": "stage1_video_step_00",
+        "stage1_video_target_latents_dir": "stage1_video_step_03",
+        "stage1_audio_start_latents_dir": "stage1_audio_step_00",
+        "stage1_audio_target_latents_dir": "stage1_audio_step_03",
+        "stage1_sampler": "ancestral_span_v2",
+        "stage1_noise_step_index": "0",
+        "stage1_noise_step_end_index": "3",
+        "stage1_noise_total_steps": "8",
+        "stage1_noise_reference_sigmas": "[1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0]",
+        "stage1_curriculum_noise_coupling": "span-v2",
+        "lora_rank": "8",
+        "lora_alpha": "8",
+    }
+    checkpoint = tmp_path / "checkpoint.safetensors"
+    save_file({"weight": np.zeros((1,), dtype=np.float32)}, checkpoint, metadata=metadata)
+
+    assert require_phase_checkpoint(checkpoint, phase, "span-v2") == checkpoint
+    with pytest.raises(ValueError, match="ancestral noise coupling"):
+        require_phase_checkpoint(checkpoint, phase, "lane")
