@@ -422,3 +422,17 @@ differed, with maximum absolute difference 0.001953125. It then generated 48
 train and 12 validation reachable targets in 193.35/47.58 seconds. The sole
 rank-4 teacher-corrected control is running. Full tests pass: `793 passed, 22
 skipped`. Do not decode unless it beats the prior latent references.
+
+The teacher-corrected control also failed the compute gate. Against its
+reachable validation target, the new rank-4 adapter improved video/audio MSE
+by 50.71%/47.66%, while the existing teacher-forced rank-8 adapter improved
+57.71%/55.89% on exactly the same inputs and targets. Neither on-policy
+variant was decoded, and no `5 -> 7` training started. Ordinary endpoint MSE
+retraining is now stopped.
+
+The next decoded control keeps exact clean-base steps `0 -> 1 -> 2 -> 3`, then
+uses the existing independent `3 -> 5` and `5 -> 7` adapters and exact
+`7 -> 8`: boundaries `[0,1,2,3,5,7,8]`. This spends six Stage-1 calls to
+protect the high-noise semantic branch and should establish whether a roughly
+1.8x quality-safe schedule exists before pursuing the remaining portable
+kernel/runtime gap to 2x.
