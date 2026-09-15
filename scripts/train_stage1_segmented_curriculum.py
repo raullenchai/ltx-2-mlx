@@ -10,6 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import yaml
+from safetensors import safe_open
 
 try:
     from scripts.train_stage1_compressed_curriculum import (
@@ -32,6 +33,15 @@ except ModuleNotFoundError:  # Direct script execution.
 SEGMENT_PHASES = PRIMARY_PHASES[:3]
 DIAGNOSTIC_PHASES = (Phase("diagnostic-1-3", 1, 3, 0.99375, 0.98125, 1, 100, 5.0e-5, 20),)
 AVAILABLE_PHASES = SEGMENT_PHASES + DIAGNOSTIC_PHASES
+
+
+def require_checkpoint_rank(path: Path, rank: int) -> Path:
+    """Reject a resumed or freshly trained checkpoint with a different rank."""
+    with safe_open(str(path), framework="numpy") as checkpoint:
+        metadata = checkpoint.metadata() or {}
+    if int(metadata.get("lora_rank", "0")) != rank or float(metadata.get("lora_alpha", "nan")) != rank:
+        raise ValueError(f"checkpoint {path} does not match requested LoRA rank/alpha {rank}")
+    return path
 
 
 def select_segment_phases(spans: list[str] | None, steps: int | None = None) -> tuple[Phase, ...]:
@@ -68,8 +78,16 @@ def main() -> int:
         type=int,
         help="Override the training budget for exactly one selected span",
     )
+    parser.add_argument(
+        "--rank",
+        type=int,
+        default=8,
+        help="LoRA rank for newly trained independent spans (alpha tracks rank; default: 8)",
+    )
     args = parser.parse_args()
 
+    if args.rank <= 0:
+        parser.error("--rank must be positive")
     try:
         phases = select_segment_phases(args.span, args.steps)
     except ValueError as exc:
@@ -81,6 +99,7 @@ def main() -> int:
             expected = output / "checkpoints" / f"lora_weights_step_{phase.steps:05d}.safetensors"
             if expected.is_file():
                 require_phase_checkpoint(expected, phase, "span-v2", "independent")
+                require_checkpoint_rank(expected, args.rank)
                 continue
             output.mkdir(parents=True, exist_ok=True)
             config = build_config(
@@ -93,8 +112,10 @@ def main() -> int:
                 noise_coupling="span-v2",
                 adapter_mode="independent",
             )
-            # Keep only the final checkpoint. Three 160 MB artifacts fit the
-            # constrained qualification host without accumulating snapshots.
+            config["lora"]["rank"] = args.rank
+            config["lora"]["alpha"] = args.rank
+            # Keep only the final checkpoint so constrained qualification hosts
+            # do not accumulate intermediate adapter snapshots.
             config["checkpoints"] = {
                 "interval": phase.steps,
                 "keep_last_n": 1,
@@ -111,6 +132,7 @@ def main() -> int:
                     check=True,
                 )
             require_phase_checkpoint(expected, phase, "span-v2", "independent")
+            require_checkpoint_rank(expected, args.rank)
     except Exception:
         _write_status(args.output_root, "training-failed")
         raise

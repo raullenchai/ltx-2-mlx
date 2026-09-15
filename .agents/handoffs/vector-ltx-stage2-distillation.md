@@ -382,3 +382,26 @@ broad early render to distinguish a harmful early correction from a schedule-
 level failure. The control is configured only by the research script's private
 state; the production pipeline constructor and CLI API remain unchanged. Full
 tests pass: `781 passed, 22 skipped`.
+
+Schedule attribution is now closed. Six clean-base/custom schedules spanning
+1.956-2.123x all failed the same chef identity/frontal-framing gate. A targeted
+broad-data `1 -> 3` student then improved 12 prompt-disjoint trajectories by
+49.16% video MSE and 39.54% audio MSE with no greater-than-5% sample regression,
+but both its combined 278.28-second decode and its 281.78-second early-only
+decode omitted almost the entire chef. The early student itself therefore
+enters the wrong semantic branch; downstream adapters are not required to
+trigger the failure.
+
+The next control uses progressive on-policy inputs. The new
+`materialize_stage1_student_rollout.py` creates a fail-closed same-filesystem
+hard-link view, replaces only the student's target video/audio boundary, and
+records the checkpoint digest and lineage. It preserves all conditions, seeds,
+noise lanes, and later teacher targets. MZR-3 materialized 48 train and 12
+prompt-disjoint validation `1 -> 3` outputs in 97.32/24.39 student seconds.
+The old independent `3 -> 5` adapter still improves video/audio MSE on that
+shifted validation input by 51.40%/47.08%, so exposure bias alone is not a
+sufficient diagnosis. A matched rank-4 on-policy `3 -> 5` control is running;
+it must substantially exceed that reference and restore the held-out chef or
+the next objective should weight semantic/perceptual error rather than train
+another ordinary-MSE downstream span. Full tests pass: `791 passed, 22
+skipped`. Public/default integration remains blocked and belongs to Atlas.

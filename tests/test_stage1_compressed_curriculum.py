@@ -24,7 +24,7 @@ from scripts.train_stage1_compressed_curriculum import (
     require_phase_checkpoint,
     validate_phase_checkpoint,
 )
-from scripts.train_stage1_segmented_curriculum import select_segment_phases
+from scripts.train_stage1_segmented_curriculum import require_checkpoint_rank, select_segment_phases
 
 
 def test_evaluator_supports_direct_script_entrypoint(tmp_path: Path) -> None:
@@ -247,6 +247,29 @@ def test_segmented_trainer_exposes_single_span_control(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert "--span {0-3,3-5,5-7,1-3}" in result.stdout
     assert "--steps STEPS" in result.stdout
+    assert "--rank RANK" in result.stdout
+
+    invalid_rank = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--model",
+            "/model",
+            "--data",
+            "/data",
+            "--output-root",
+            "/output",
+            "--rank",
+            "0",
+        ],
+        cwd=tmp_path,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert invalid_rank.returncode == 2
+    assert "--rank must be positive" in invalid_rank.stderr
 
 
 def test_segmented_trainer_can_scale_one_span_budget() -> None:
@@ -267,6 +290,19 @@ def test_segmented_trainer_can_scale_one_span_budget() -> None:
         select_segment_phases(["0-3", "3-5"], 600)
     with pytest.raises(ValueError, match="positive"):
         select_segment_phases(["0-3"], 0)
+
+
+def test_segmented_trainer_rejects_checkpoint_from_another_rank(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "checkpoint.safetensors"
+    save_file(
+        {"weight": np.zeros((1,), dtype=np.float32)},
+        checkpoint,
+        metadata={"lora_rank": "8", "lora_alpha": "8"},
+    )
+
+    assert require_checkpoint_rank(checkpoint, 8) == checkpoint
+    with pytest.raises(ValueError, match="requested LoRA rank"):
+        require_checkpoint_rank(checkpoint, 4)
 
 
 def test_curriculum_uses_selected_boundaries_and_original_noise_lanes() -> None:
