@@ -883,6 +883,7 @@ class LtxvTrainer:
             # LoRALinear applies alpha/rank during training, while generic
             # safetensors fusion consumes an explicit strength.
             metadata.update(lora_rank=lora.rank, lora_alpha=lora.alpha)
+        metadata.update(getattr(self, "_checkpoint_metadata_overrides", {}))
         return {key: str(value) for key, value in metadata.items()}
 
     def _cleanup_checkpoints(self) -> None:

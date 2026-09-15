@@ -172,6 +172,19 @@ class TestLoraCheckpointFormat:
 
         assert trainer._build_checkpoint_metadata() == {"lora_rank": "8", "lora_alpha": "4"}
 
+    def test_checkpoint_metadata_allows_experimental_overrides(self) -> None:
+        from ltx_trainer_mlx.trainer import LtxvTrainer
+
+        trainer = object.__new__(LtxvTrainer)
+        trainer._training_strategy = type("Strategy", (), {"get_checkpoint_metadata": lambda _self: {}})()
+        trainer._config = type("Config", (), {"lora": None})()
+        trainer._checkpoint_metadata_overrides = {"distillation_objective": "dmd2", "updates": 2}
+
+        assert trainer._build_checkpoint_metadata() == {
+            "distillation_objective": "dmd2",
+            "updates": "2",
+        }
+
     @pytest.fixture()
     def lora_checkpoint(self, tmp_path: Path) -> tuple[Path, int, int, int]:
         """Create a small model with LoRA layers and save a checkpoint."""

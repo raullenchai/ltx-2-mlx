@@ -284,6 +284,46 @@ seconds (1.702x versus standard). Exact product-grid coverage fixes a genuine
 validation blind spot but does not rescue paired endpoint MSE. Escalate to the
 predeclared decoded-feature/reward or distribution-matching route.
 
+An experimental rectified-flow distribution-matching trainer now implements
+the DMD2 two-model contract instead of approximating it with another endpoint
+loss. The learned `3 -> 7` transition is followed by a differentiable base
+`7 -> 8` terminal step; real and fake score predictions are taken on the
+resulting complete Stage-1 clean latent, and the fake score is trained only on
+detached generator samples. A paired transition loss remains as a conservative
+anchor. The real score reuses the frozen base weights with generator LoRA
+scales disabled, while the fake score owns a separate LoRA adapter and
+optimizer. This keeps inference identical to the existing portable adapter
+path; the second model exists only during training. See the
+[DMD paper](https://arxiv.org/abs/2311.18828) and the
+[official DMD2 implementation](https://github.com/tianweiy/DMD2).
+
+The real MLX smoke test completed one alternating short-grid update in 10.8
+seconds at 39.0 GB peak memory. A 20-step short-grid control remained finite
+and slightly improved the original held-out paired MSE. On the product grid,
+five alternating updates without fake-score warmup took 494.7 seconds; a
+stronger control with five fake-score warmup updates, five alternating updates,
+`paired=1`, `DMD=5`, and a `3e-6` generator learning rate took 689.6 seconds at
+39.0 GB peak. Its four-prompt held-out video/audio MSE improved from
+19.56%/19.62% to 19.67%/19.81% versus the clean base. Nevertheless, its held-out
+chef decode still had severe motion smearing and structural drift. The 97.60
+second Rapid render preserves the fast execution path but fails the decoded
+quality gate. These short runs validate the implementation and reject the idea
+that a handful of DMD updates is sufficient; they do not reject a properly
+warmed, longer alternating run.
+
+Use periodic checkpoints for the longer control:
+
+```bash
+python scripts/train_stage1_distribution_matching.py \
+  --model /path/to/ltx-2.5-mlx-q8/snapshot \
+  --data /private/tmp/LTX-stage1-product-grid-split/train \
+  --output /private/tmp/LTX-stage1-dmd-long \
+  --checkpoint /path/to/product-grid-r4-100.safetensors \
+  --steps 40 --fake-warmup-steps 32 --checkpoint-interval 10 \
+  --rank 4 --fake-rank 4 --generator-lr 1e-6 --fake-lr 1e-5 \
+  --paired-weight 1 --dm-weight 5
+```
+
 ```bash
 python scripts/capture_stage1_trajectories.py \
   --model /path/to/ltx-2.5-mlx-q8/snapshot \
