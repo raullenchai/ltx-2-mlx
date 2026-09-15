@@ -1,7 +1,18 @@
 from pathlib import Path
 from types import MethodType, SimpleNamespace
 
+import mlx.core as mx
+import pytest
+
+from ltx_core_mlx.conditioning.types.latent_cond import LatentState
+from ltx_pipelines_mlx import distilled
 from ltx_pipelines_mlx.distilled import DistilledPipeline
+from ltx_pipelines_mlx.utils.samplers import DenoiseOutput
+
+
+def _state(value: float) -> LatentState:
+    latent = mx.full((1, 2, 3), value)
+    return LatentState(latent=latent, clean_latent=mx.zeros_like(latent), denoise_mask=mx.ones((1, 2, 1)))
 
 
 def test_load_applies_only_validated_stage1_adapter() -> None:
@@ -34,3 +45,111 @@ def test_load_applies_only_validated_stage1_adapter() -> None:
     ]
     assert not hasattr(pipe, "_pending_loras")
     assert pipe._loaded is True
+
+
+def test_clean_final_stage1_uses_student_then_exact_base(monkeypatch) -> None:
+    pipe = object.__new__(DistilledPipeline)
+    pipe.dit = "student"
+    pipe._loaded = True
+    pipe._tile_count = None
+    pipe._fast_stage1_package = SimpleNamespace(
+        transformer_path=Path("/model/transformer-distilled.safetensors"),
+        contract=SimpleNamespace(
+            clean_final_transition=True,
+            schedule=(1.0, 0.98125, 0.909375, 0.421875, 0.0),
+            noise_step_spans=((0, 3), (3, 5), (5, 7), (7, 8)),
+            noise_reference_sigmas=(1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0),
+            noise_total_steps=8,
+        ),
+    )
+    loads = []
+    pipe._load_transformer_with_optional_streaming = MethodType(
+        lambda _self, path: loads.append(path) or "base",
+        pipe,
+    )
+    pipe._stage2_model = MethodType(lambda _self, dit, _shape: dit, pipe)
+    calls = []
+
+    def ancestral(**kwargs):
+        calls.append(("ancestral", kwargs))
+        return DenoiseOutput(
+            video_latent=kwargs["video_state"].latent + 1,
+            audio_latent=kwargs["audio_state"].latent + 1,
+        )
+
+    def deterministic(**kwargs):
+        calls.append(("base", kwargs))
+        return DenoiseOutput(
+            video_latent=kwargs["video_state"].latent + 1,
+            audio_latent=kwargs["audio_state"].latent + 1,
+        )
+
+    monkeypatch.setattr(distilled, "ancestral_denoise_loop", ancestral)
+    monkeypatch.setattr(distilled, "denoise_loop", deterministic)
+    monkeypatch.setattr(distilled, "aggressive_cleanup", lambda: None)
+    monkeypatch.setattr(distilled, "_materialize", lambda *_args: None)
+
+    result = pipe._run_clean_final_fast_stage1(
+        _state(0),
+        _state(10),
+        mx.zeros((1, 1, 1)),
+        mx.zeros((1, 1, 1)),
+        latent_shape=(1, 1, 2),
+        noise_seed=10042,
+    )
+
+    learned = calls[0][1]
+    correction = calls[1][1]
+    assert learned["model"] == "student"
+    assert learned["sigmas"] == [1.0, 0.98125, 0.909375, 0.421875]
+    assert learned["noise_step_spans"] == [(0, 3), (3, 5), (5, 7)]
+    assert learned["noise_seed"] == 10042
+    assert correction["model"] == "base"
+    assert correction["sigmas"] == [0.421875, 0.0]
+    assert mx.array_equal(correction["video_state"].latent, mx.ones((1, 2, 3))).item()
+    assert mx.array_equal(result.video_latent, mx.full((1, 2, 3), 2)).item()
+    assert loads == [Path("/model/transformer-distilled.safetensors")]
+    assert pipe.dit == "base"
+
+
+def test_clean_final_stage1_failure_releases_model(monkeypatch) -> None:
+    pipe = object.__new__(DistilledPipeline)
+    pipe.dit = "student"
+    pipe._loaded = True
+    pipe._tile_count = None
+    pipe._fast_stage1_package = SimpleNamespace(
+        transformer_path=Path("/model/transformer-distilled.safetensors"),
+        contract=SimpleNamespace(
+            clean_final_transition=True,
+            schedule=(1.0, 0.98125, 0.909375, 0.421875, 0.0),
+            noise_step_spans=((0, 3), (3, 5), (5, 7), (7, 8)),
+            noise_reference_sigmas=(1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.0),
+            noise_total_steps=8,
+        ),
+    )
+    pipe._stage2_model = MethodType(lambda _self, dit, _shape: dit, pipe)
+    pipe._load_transformer_with_optional_streaming = MethodType(lambda _self, _path: "base", pipe)
+    monkeypatch.setattr(
+        distilled,
+        "ancestral_denoise_loop",
+        lambda **kwargs: DenoiseOutput(
+            video_latent=kwargs["video_state"].latent,
+            audio_latent=kwargs["audio_state"].latent,
+        ),
+    )
+    monkeypatch.setattr(distilled, "denoise_loop", lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("failed")))
+    monkeypatch.setattr(distilled, "aggressive_cleanup", lambda: None)
+    monkeypatch.setattr(distilled, "_materialize", lambda *_args: None)
+
+    with pytest.raises(RuntimeError, match="failed"):
+        pipe._run_clean_final_fast_stage1(
+            _state(0),
+            _state(0),
+            mx.zeros((1, 1, 1)),
+            mx.zeros((1, 1, 1)),
+            latent_shape=(1, 1, 2),
+            noise_seed=1,
+        )
+
+    assert pipe.dit is None
+    assert pipe._loaded is False

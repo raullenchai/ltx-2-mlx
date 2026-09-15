@@ -27,6 +27,7 @@ class FastStage1Contract:
     noise_step_spans: tuple[tuple[int, int], ...] | None
     noise_reference_sigmas: tuple[float, ...] | None
     noise_total_steps: int
+    clean_final_transition: bool
     lora_rank: int
     lora_alpha: float
     base_model_id: str
@@ -243,7 +244,11 @@ def read_fast_stage1_contract(
     with safe_open(path, framework="numpy") as checkpoint:
         metadata = checkpoint.metadata() or {}
         capability = _required(metadata, "fast_stage1_capability")
-        if capability not in ("ltx_stage1_compressed_v1", "ltx_stage1_compressed_span_v2"):
+        if capability not in (
+            "ltx_stage1_compressed_v1",
+            "ltx_stage1_compressed_span_v2",
+            "ltx_stage1_compressed_span_v2_clean_final",
+        ):
             raise ValueError(f"unsupported fast stage-1 capability {capability!r}")
         schedule = _parse_schedule(_required(metadata, "fast_stage1_schedule"))
         if int(_required(metadata, "stage1_steps")) != len(schedule) - 1:
@@ -254,6 +259,7 @@ def read_fast_stage1_contract(
         noise_step_indices = None
         noise_step_spans = None
         noise_reference_sigmas = None
+        clean_final_transition = capability == "ltx_stage1_compressed_span_v2_clean_final"
         if capability == "ltx_stage1_compressed_v1":
             noise_step_indices = _parse_noise_indices(
                 _required(metadata, "fast_stage1_noise_step_indices"),
@@ -278,7 +284,12 @@ def read_fast_stage1_contract(
                 for index, span in enumerate(noise_step_spans)
             ):
                 raise ValueError("fast stage-1 noise spans do not match its coarse schedule")
-            if _required(metadata, "stage1_sampler") != "ancestral_compressed_span_v2":
+            expected_sampler = (
+                "ancestral_compressed_span_v2_clean_final"
+                if clean_final_transition
+                else "ancestral_compressed_span_v2"
+            )
+            if _required(metadata, "stage1_sampler") != expected_sampler:
                 raise ValueError("fast stage-1 v2 requires the ancestral_compressed_span_v2 sampler")
         if float(_required(metadata, "stage1_ancestral_eta")) != 1.0:
             raise ValueError("fast stage-1 requires ancestral eta=1")
@@ -328,6 +339,7 @@ def read_fast_stage1_contract(
         noise_step_spans=noise_step_spans,
         noise_reference_sigmas=noise_reference_sigmas,
         noise_total_steps=noise_total_steps,
+        clean_final_transition=clean_final_transition,
         lora_rank=rank,
         lora_alpha=alpha,
         base_model_id=declared_model_id,

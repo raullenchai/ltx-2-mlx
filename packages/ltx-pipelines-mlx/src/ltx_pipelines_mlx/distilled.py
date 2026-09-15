@@ -196,6 +196,64 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
 
         return X0Model(TiledLTXModel(dit, VideoModalityTiler(self._tile_count, latent_shape=latent_shape)))
 
+    def _run_clean_final_fast_stage1(
+        self,
+        video_state: LatentState,
+        audio_state: LatentState,
+        video_embeds: mx.array,
+        audio_embeds: mx.array,
+        *,
+        latent_shape: tuple[int, int, int],
+        noise_seed: int,
+    ) -> DenoiseOutput:
+        """Run three learned coarse transitions and the exact clean-base final step."""
+        package = self._fast_stage1_package
+        assert package is not None and package.contract.clean_final_transition
+        assert self.dit is not None
+        contract = package.contract
+        assert contract.noise_step_spans is not None
+        assert contract.noise_reference_sigmas is not None
+        schedule = list(contract.schedule)
+
+        student_model = self._stage2_model(self.dit, latent_shape)
+        learned = ancestral_denoise_loop(
+            model=student_model,
+            video_state=video_state,
+            audio_state=audio_state,
+            video_text_embeds=video_embeds,
+            audio_text_embeds=audio_embeds,
+            sigmas=schedule[:-1],
+            noise_seed=noise_seed,
+            noise_step_spans=list(contract.noise_step_spans[:-1]),
+            noise_reference_sigmas=list(contract.noise_reference_sigmas),
+            noise_total_steps=contract.noise_total_steps,
+            eta=ANCESTRAL_ETA,
+            s_noise=ANCESTRAL_S_NOISE,
+        )
+        _materialize(learned.video_latent, learned.audio_latent)
+        del student_model
+        self.dit = None
+        aggressive_cleanup()
+
+        try:
+            self.dit = self._load_transformer_with_optional_streaming(package.transformer_path)
+            clean_model = self._stage2_model(self.dit, latent_shape)
+            corrected = denoise_loop(
+                model=clean_model,
+                video_state=replace(video_state, latent=learned.video_latent),
+                audio_state=replace(audio_state, latent=learned.audio_latent),
+                video_text_embeds=video_embeds,
+                audio_text_embeds=audio_embeds,
+                sigmas=schedule[-2:],
+            )
+            del clean_model
+            return corrected
+        except Exception:
+            self.dit = None
+            self._loaded = False
+            aggressive_cleanup()
+            raise
+
     def _run_fast_stage2(
         self,
         video_state: LatentState,
@@ -416,17 +474,32 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
 
         capture_stage1(sigmas_1[0], video_state.latent, audio_state.latent)
 
-        stage1_dit = self.dit
-        if self._tile_count is not None:
-            from ltx_core_mlx.components.modality_tiling import TiledLTXModel, VideoModalityTiler
-
-            tiler_1 = VideoModalityTiler(self._tile_count, latent_shape=(F, H_half, W_half))
-            stage1_dit = TiledLTXModel(self.dit, tiler_1)
-
-        x0_model = X0Model(stage1_dit)
-
         self._pre_denoise_flush(video_state, audio_state)
-        if self.use_ancestral_sampler:
+        clean_final_stage1 = bool(
+            self._fast_stage1_package is not None
+            and getattr(self._fast_stage1_package.contract, "clean_final_transition", False)
+        )
+        stage1_dit = None
+        x0_model = None
+        if clean_final_stage1:
+            output_1 = self._run_clean_final_fast_stage1(
+                video_state,
+                audio_state,
+                video_embeds,
+                audio_embeds,
+                latent_shape=(F, H_half, W_half),
+                noise_seed=seed + ANCESTRAL_NOISE_SEED_OFFSET,
+            )
+        else:
+            stage1_dit = self.dit
+            if self._tile_count is not None:
+                from ltx_core_mlx.components.modality_tiling import TiledLTXModel, VideoModalityTiler
+
+                tiler_1 = VideoModalityTiler(self._tile_count, latent_shape=(F, H_half, W_half))
+                stage1_dit = TiledLTXModel(self.dit, tiler_1)
+            x0_model = X0Model(stage1_dit)
+
+        if not clean_final_stage1 and self.use_ancestral_sampler:
             # LTX-2.5 stage 1: ancestral (SDE) Euler — fresh seeded noise per
             # step (upstream ``ANCESTRAL_ETA`` / ``S_NOISE`` / seed offset).
             output_1 = ancestral_denoise_loop(
@@ -445,7 +518,7 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
                 s_noise=ANCESTRAL_S_NOISE,
                 step_callback=capture_stage1 if stage1_trajectory_callback is not None else None,
             )
-        else:
+        elif not clean_final_stage1:
             # 2.3 stage 1: deterministic Euler (unchanged behaviour).
             output_1 = denoise_loop(
                 model=x0_model,
@@ -465,7 +538,8 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
             # upscale, which also minimizes peak memory.
             _materialize(output_1.video_latent, output_1.audio_latent)
             del stage1_dit, x0_model
-            self.dit = None
+            if not clean_final_stage1:
+                self.dit = None
             aggressive_cleanup()
 
         # --- Upscale (same denorm/upsample/renorm as TI2VidTwoStagesPipeline) ---

@@ -150,6 +150,16 @@ fine sigma schedule plus contiguous noise spans into the artifact. The loader
 rejects a relabeled v1 checkpoint, missing or non-contiguous spans, and any
 coarse/fine schedule mismatch.
 
+The original `7 -> 8` transition already uses one base evaluation and has no
+compression benefit. If a shared adapter perturbs that nearly exact terminal
+step, package the replay `5 -> 7` checkpoint with
+`--clean-final-transition`. This emits a separate
+`ltx_stage1_compressed_span_v2_clean_final` capability. Runtime applies the
+student only to `0 -> 3`, `3 -> 5`, and `5 -> 7`, materializes both modalities,
+releases the adapter, and executes the unchanged `7 -> 8` transition on the
+clean base. The schedule remains four evaluations; only model reload overhead
+is added. Do not relabel an ordinary span-v2 package as clean-final.
+
 The opt-in runtime is `--distilled --fast-stage1-manifest fast-stage1.json`.
 It fails closed on a malformed or mismatched package and preserves the
 original Stage-1 behavior when the flag is absent. A separately qualified

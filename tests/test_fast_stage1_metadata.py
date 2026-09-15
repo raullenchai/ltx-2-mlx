@@ -51,6 +51,15 @@ def _metadata_v2(**overrides: str) -> dict[str, str]:
     return values
 
 
+def _metadata_clean_final(**overrides: str) -> dict[str, str]:
+    values = _metadata_v2(
+        fast_stage1_capability="ltx_stage1_compressed_span_v2_clean_final",
+        stage1_sampler="ancestral_compressed_span_v2_clean_final",
+    )
+    values.update(overrides)
+    return values
+
+
 def _checkpoint(tmp_path, metadata=None):
     path = tmp_path / "fast-stage1.safetensors"
     save_file(
@@ -102,6 +111,24 @@ def test_reads_span_v2_stage1_contract(tmp_path) -> None:
         0.421875,
         0.0,
     )
+    assert contract.clean_final_transition is False
+
+
+def test_reads_clean_final_span_v2_contract(tmp_path) -> None:
+    contract = _read(_checkpoint(tmp_path, _metadata_clean_final()))
+
+    assert contract.clean_final_transition is True
+    assert contract.noise_step_spans == ((0, 3), (3, 5), (5, 7), (7, 8))
+
+
+def test_rejects_clean_final_capability_with_legacy_sampler(tmp_path) -> None:
+    with pytest.raises(ValueError, match="span_v2 sampler"):
+        _read(
+            _checkpoint(
+                tmp_path,
+                _metadata_clean_final(stage1_sampler="ancestral_compressed_span_v2"),
+            )
+        )
 
 
 @pytest.mark.parametrize(

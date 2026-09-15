@@ -21,20 +21,39 @@ _NOISE_STEP_INDICES = [0, 3, 5, 7]
 _NOISE_STEP_SPANS = [[0, 3], [3, 5], [5, 7], [7, 8]]
 
 
-def _validate_source_checkpoint(metadata: dict[str, str], noise_coupling: str = "lane") -> None:
+def _validate_source_checkpoint(
+    metadata: dict[str, str],
+    noise_coupling: str = "lane",
+    *,
+    clean_final_transition: bool = False,
+) -> None:
+    if clean_final_transition and noise_coupling != "span-v2":
+        raise ValueError("clean-final Stage-1 requires span-v2 noise coupling")
+    start_index, target_index = (5, 7) if clean_final_transition else (7, 8)
     expected = {
         "distillation": "stage1_transition",
-        "stage1_sigma": "0.421875",
-        "stage1_target_sigma": "0.0",
-        "stage1_video_start_latents_dir": "stage1_video_step_07",
-        "stage1_video_target_latents_dir": "stage1_video_step_08",
-        "stage1_audio_start_latents_dir": "stage1_audio_step_07",
-        "stage1_audio_target_latents_dir": "stage1_audio_step_08",
+        "stage1_sigma": "0.909375" if clean_final_transition else "0.421875",
+        "stage1_target_sigma": "0.421875" if clean_final_transition else "0.0",
+        "stage1_video_start_latents_dir": f"stage1_video_step_{start_index:02d}",
+        "stage1_video_target_latents_dir": f"stage1_video_step_{target_index:02d}",
+        "stage1_audio_start_latents_dir": f"stage1_audio_step_{start_index:02d}",
+        "stage1_audio_target_latents_dir": f"stage1_audio_step_{target_index:02d}",
     }
     for key, value in expected.items():
         if metadata.get(key) != value:
             raise ValueError(f"checkpoint is not the final compressed Stage-1 curriculum artifact: {key}")
-    if "stage1_noise_step_index" in metadata or metadata.get("stage1_sampler", "").startswith("ancestral"):
+    if clean_final_transition:
+        expected_noise = {
+            "stage1_sampler": "ancestral_span_v2",
+            "stage1_noise_step_index": "5",
+            "stage1_noise_step_end_index": "7",
+            "stage1_noise_total_steps": "8",
+            "stage1_noise_reference_sigmas": str(DISTILLED_SIGMAS),
+        }
+        for key, value in expected_noise.items():
+            if metadata.get(key) != value:
+                raise ValueError(f"clean-final Stage-1 checkpoint has incompatible {key}")
+    elif "stage1_noise_step_index" in metadata or metadata.get("stage1_sampler", "").startswith("ancestral"):
         raise ValueError("final compressed Stage-1 checkpoint must not declare ancestral noise")
     declared_coupling = metadata.get("stage1_curriculum_noise_coupling")
     if noise_coupling == "span-v2" and declared_coupling != "span-v2":
@@ -69,6 +88,11 @@ def main() -> int:
     parser.add_argument("--transformer-file", default="transformer-distilled.safetensors")
     parser.add_argument("--qualification-revision", required=True)
     parser.add_argument("--noise-coupling", choices=("lane", "span-v2"), default="lane")
+    parser.add_argument(
+        "--clean-final-transition",
+        action="store_true",
+        help="Keep the original 7 -> 8 base transition instead of applying the shared adapter",
+    )
     args = parser.parse_args()
 
     if not _IMMUTABLE_REVISION_RE.fullmatch(args.base_revision):
@@ -79,18 +103,42 @@ def main() -> int:
 
     with safe_open(args.checkpoint, framework="numpy") as source:
         metadata = source.metadata() or {}
-    _validate_source_checkpoint(metadata, args.noise_coupling)
+    _validate_source_checkpoint(
+        metadata,
+        args.noise_coupling,
+        clean_final_transition=args.clean_final_transition,
+    )
     if int(metadata.get("lora_rank", "0")) <= 0 or float(metadata.get("lora_alpha", "0")) <= 0:
         raise ValueError("checkpoint must declare a positive LoRA rank and alpha")
 
     output_metadata = dict(metadata)
+    for key in (
+        "stage1_noise_step_index",
+        "stage1_noise_step_end_index",
+        "stage1_noise_total_steps",
+        "stage1_noise_reference_sigmas",
+    ):
+        output_metadata.pop(key, None)
     span_v2 = args.noise_coupling == "span-v2"
+    capability = "ltx_stage1_compressed_v1"
+    sampler = "ancestral_compressed"
+    if span_v2:
+        capability = (
+            "ltx_stage1_compressed_span_v2_clean_final"
+            if args.clean_final_transition
+            else "ltx_stage1_compressed_span_v2"
+        )
+        sampler = (
+            "ancestral_compressed_span_v2_clean_final"
+            if args.clean_final_transition
+            else "ancestral_compressed_span_v2"
+        )
     output_metadata.update(
-        fast_stage1_capability="ltx_stage1_compressed_span_v2" if span_v2 else "ltx_stage1_compressed_v1",
+        fast_stage1_capability=capability,
         fast_stage1_schedule=json.dumps(_SCHEDULE, separators=(",", ":")),
         fast_stage1_noise_total_steps="8",
         stage1_steps="4",
-        stage1_sampler="ancestral_compressed_span_v2" if span_v2 else "ancestral_compressed",
+        stage1_sampler=sampler,
         stage1_ancestral_eta="1.0",
         stage1_ancestral_s_noise="1.0",
         base_model_id=args.base_model_id,
