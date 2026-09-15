@@ -379,4 +379,6 @@ span-v2 noise. `render_segmented_stage1_ablation.py` accepts this only for a
 diagnostic qualification and the option is deliberately absent from the
 product CLI. Queue `--base-span 0-3` and then all three base spans after the
 broad early render to distinguish a harmful early correction from a schedule-
-level failure. Full tests pass: `780 passed, 22 skipped`.
+level failure. The control is configured only by the research script's private
+state; the production pipeline constructor and CLI API remain unchanged. Full
+tests pass: `781 passed, 22 skipped`.

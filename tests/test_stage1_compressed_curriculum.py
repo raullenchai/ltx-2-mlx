@@ -2,11 +2,13 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 from safetensors.numpy import save_file
 
+from scripts.render_segmented_stage1_ablation import apply_diagnostic_base_spans
 from scripts.train_stage1_compressed_curriculum import (
     PHASES,
     PRIMARY_PHASES,
@@ -94,6 +96,33 @@ def test_segmented_ablation_renderer_supports_direct_script_entrypoint(tmp_path:
 
     assert result.returncode == 0, result.stderr
     assert "--base-span {0-3,3-5,5-7}" in result.stdout
+
+
+def test_segmented_ablation_requires_diagnostic_package() -> None:
+    segments = (SimpleNamespace(start_index=0, end_index=3),)
+    pipe = SimpleNamespace(
+        _fast_stage1_segmented_package=SimpleNamespace(
+            segments=segments,
+            qualification_revision="diagnostic-control",
+        )
+    )
+
+    apply_diagnostic_base_spans(pipe, ((0, 3),))
+    assert pipe._diagnostic_base_stage1_spans == frozenset({(0, 3)})
+
+    pipe._fast_stage1_segmented_package.qualification_revision = "release-v1"
+    with pytest.raises(ValueError, match="diagnostic qualification"):
+        apply_diagnostic_base_spans(pipe, ((0, 3),))
+    with pytest.raises(ValueError, match="packaged Stage-1 segments"):
+        apply_diagnostic_base_spans(
+            SimpleNamespace(
+                _fast_stage1_segmented_package=SimpleNamespace(
+                    segments=segments,
+                    qualification_revision="diagnostic-control",
+                )
+            ),
+            ((3, 5),),
+        )
 
 
 def test_segmented_trainer_exposes_single_span_control(tmp_path: Path) -> None:

@@ -15,6 +15,20 @@ _SPANS = {
 }
 
 
+def apply_diagnostic_base_spans(pipe: DistilledPipeline, spans: tuple[tuple[int, int], ...]) -> None:
+    """Configure a validated diagnostic package for adapter attribution."""
+    package = pipe._fast_stage1_segmented_package
+    if package is None:
+        raise ValueError("diagnostic base spans require a segmented fast stage-1 package")
+    selected = frozenset(spans)
+    available = {(segment.start_index, segment.end_index) for segment in package.segments}
+    if not selected.issubset(available):
+        raise ValueError("diagnostic base spans must name packaged Stage-1 segments")
+    if not package.qualification_revision.startswith("diagnostic-"):
+        raise ValueError("diagnostic base spans require a diagnostic qualification")
+    pipe._diagnostic_base_stage1_spans = selected
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, required=True)
@@ -38,8 +52,8 @@ def main() -> int:
         low_ram_streaming=args.low_ram,
         fast_stage1_segmented_manifest=args.fast_stage1_segmented_manifest,
         fast_stage2_manifest=args.fast_stage2_manifest,
-        diagnostic_base_stage1_spans=tuple(_SPANS[value] for value in args.base_span),
     )
+    apply_diagnostic_base_spans(pipe, tuple(_SPANS[value] for value in args.base_span))
     pipe.verbose = not args.quiet
     pipe.generate_and_save(
         prompt=args.prompt,
