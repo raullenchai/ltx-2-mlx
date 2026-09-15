@@ -101,6 +101,29 @@ def test_load_applies_first_segment_only() -> None:
     assert not hasattr(pipe, "_pending_loras")
 
 
+def test_diagnostic_ablation_can_use_base_for_first_segment() -> None:
+    pipe = object.__new__(DistilledPipeline)
+    pipe._loaded = False
+    pipe.dit = None
+    pipe.upsampler = object()
+    pipe._fast_stage1_package = None
+    pipe._fast_stage1_segmented_package = _segmented_package()
+    pipe._diagnostic_base_stage1_spans = frozenset({(0, 3)})
+    observed = []
+
+    def load(_self, path):
+        observed.append((path, getattr(_self, "_pending_loras", None)))
+        return "base"
+
+    pipe._load_transformer_with_optional_streaming = MethodType(load, pipe)
+    pipe._load_vae_encoder = lambda: None
+
+    pipe.load()
+
+    assert pipe.dit == "base"
+    assert observed == [(Path("/model/transformer-distilled.safetensors"), None)]
+
+
 def test_segmented_stage1_swaps_each_student_then_uses_exact_base(monkeypatch) -> None:
     pipe = object.__new__(DistilledPipeline)
     pipe.dit = "segment-0-3"

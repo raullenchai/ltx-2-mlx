@@ -372,3 +372,11 @@ The targeted independent trainer also supports a fail-closed `--steps N`
 override only when exactly one `--span` is selected. If the first 100-step
 broad run is underfit, use a fresh output root for an equal-exposure control;
 do not overwrite or relabel the 100-step checkpoint.
+
+The next orthogonal decode control can replace selected packaged adapter spans
+with the immutable base while preserving the same compressed schedule and
+span-v2 noise. `render_segmented_stage1_ablation.py` accepts this only for a
+diagnostic qualification and the option is deliberately absent from the
+product CLI. Queue `--base-span 0-3` and then all three base spans after the
+broad early render to distinguish a harmful early correction from a schedule-
+level failure. Full tests pass: `780 passed, 22 skipped`.

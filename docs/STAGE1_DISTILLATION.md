@@ -316,3 +316,11 @@ narrow object-only cohort does not preserve high-level prompt semantics. The
 next controlled variable is coverage of the earliest, highest-noise span;
 keep the independently trained middle and late adapters fixed while retraining
 only `0 -> 3` on the broader prompt-disjoint cohort.
+
+If a decoded failure persists, localize it before changing every adapter.
+`scripts/render_segmented_stage1_ablation.py` accepts a diagnostic package and
+one or more `--base-span` values. It retains the exact compressed schedule and
+noise coupling but uses the immutable base transformer for those transitions,
+allowing same-prompt decoded attribution to early, middle, or late adapter
+corrections. The option is intentionally unavailable through the product CLI
+and rejects non-diagnostic qualification revisions.

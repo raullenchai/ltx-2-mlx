@@ -110,6 +110,9 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
         fast_stage2_manifest: Optional schema-v1 manifest filename inside the
             model directory. Enabling it validates and runs the portable
             learned first stage-2 transition before a clean-base correction.
+        diagnostic_base_stage1_spans: Packaged adapter spans to replace with
+            the immutable base for research attribution. Requires an explicit
+            diagnostic segmented package and is not exposed by the product CLI.
     """
 
     def __init__(
@@ -122,6 +125,7 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
         fast_stage1_manifest: str | None = None,
         fast_stage1_segmented_manifest: str | None = None,
         fast_stage2_manifest: str | None = None,
+        diagnostic_base_stage1_spans: tuple[tuple[int, int], ...] = (),
     ):
         super().__init__(
             model_dir,
@@ -150,6 +154,16 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
             )
             if not self.use_ancestral_sampler:
                 raise ValueError("segmented fast stage 1 requires an LTX-2.5 ancestral checkpoint")
+        self._diagnostic_base_stage1_spans = frozenset(diagnostic_base_stage1_spans)
+        if self._diagnostic_base_stage1_spans:
+            package = self._fast_stage1_segmented_package
+            if package is None:
+                raise ValueError("diagnostic base spans require a segmented fast stage-1 package")
+            available = {(segment.start_index, segment.end_index) for segment in package.segments}
+            if not self._diagnostic_base_stage1_spans.issubset(available):
+                raise ValueError("diagnostic base spans must name packaged Stage-1 segments")
+            if not package.qualification_revision.startswith("diagnostic-"):
+                raise ValueError("diagnostic base spans require a diagnostic qualification")
         if fast_stage2_manifest is not None:
             self._fast_stage2_package = read_fast_stage2_package(self.model_dir, fast_stage2_manifest)
         if self._fast_stage1_package is not None and self._fast_stage2_package is not None:
@@ -214,11 +228,18 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
                     package = self._fast_stage1_package
                     adapter_path = package.adapter_path
                     strength = package.contract.lora_alpha / package.contract.lora_rank
-                self._pending_loras = [(str(adapter_path), strength)]
-                try:
+                base_spans = getattr(self, "_diagnostic_base_stage1_spans", frozenset())
+                if self._fast_stage1_segmented_package is not None and (
+                    first.start_index,
+                    first.end_index,
+                ) in base_spans:
                     self.dit = self._load_transformer_with_optional_streaming(package.transformer_path)
-                finally:
-                    del self._pending_loras
+                else:
+                    self._pending_loras = [(str(adapter_path), strength)]
+                    try:
+                        self.dit = self._load_transformer_with_optional_streaming(package.transformer_path)
+                    finally:
+                        del self._pending_loras
 
         self._load_vae_encoder()
 
@@ -313,11 +334,17 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
         try:
             for index, segment in enumerate(package.segments):
                 if index:
-                    self._pending_loras = [(str(segment.adapter_path), segment.lora_alpha / segment.lora_rank)]
-                    try:
+                    base_spans = getattr(self, "_diagnostic_base_stage1_spans", frozenset())
+                    if (segment.start_index, segment.end_index) in base_spans:
                         self.dit = self._load_transformer_with_optional_streaming(package.transformer_path)
-                    finally:
-                        del self._pending_loras
+                    else:
+                        self._pending_loras = [
+                            (str(segment.adapter_path), segment.lora_alpha / segment.lora_rank)
+                        ]
+                        try:
+                            self.dit = self._load_transformer_with_optional_streaming(package.transformer_path)
+                        finally:
+                            del self._pending_loras
 
                 student_model = self._stage2_model(self.dit, latent_shape)
                 learned = ancestral_denoise_loop(

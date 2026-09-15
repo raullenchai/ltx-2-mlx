@@ -70,6 +70,32 @@ def test_segmented_evaluator_supports_direct_script_entrypoint(tmp_path: Path) -
     assert "Evaluate three independent Stage-1 adapters" in result.stdout
 
 
+def test_segmented_ablation_renderer_supports_direct_script_entrypoint(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    script = repository / "scripts/render_segmented_stage1_ablation.py"
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = os.pathsep.join(
+        str(repository / path)
+        for path in (
+            "packages/ltx-core-mlx/src",
+            "packages/ltx-pipelines-mlx/src",
+            "packages/ltx-trainer/src",
+        )
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(script), "--help"],
+        cwd=tmp_path,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "--base-span {0-3,3-5,5-7}" in result.stdout
+
+
 def test_segmented_trainer_exposes_single_span_control(tmp_path: Path) -> None:
     repository = Path(__file__).resolve().parents[1]
     script = repository / "scripts/train_stage1_segmented_curriculum.py"
