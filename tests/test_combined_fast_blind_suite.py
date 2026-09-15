@@ -7,6 +7,7 @@ from scripts.render_combined_fast_blind_suite import (
     CasePlan,
     _case_plans,
     _completed_timing,
+    _environment,
     _generation_command,
     _review_case,
 )
@@ -86,3 +87,15 @@ def test_timing_checkpoint_is_fail_closed(tmp_path: Path) -> None:
     timing.write_text('{"standard_seconds": 10}')
     with pytest.raises(ValueError, match="invalid timing checkpoint"):
         _completed_timing(timing)
+
+
+def test_environment_is_diagnostic_only(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "scripts.render_combined_fast_blind_suite._sysctl",
+        lambda name: {"hw.memsize": "51539607552", "machdep.cpu.brand_string": "Apple M4 Pro"}[name],
+    )
+
+    environment = _environment()
+
+    assert environment["chip"] == "Apple M4 Pro"
+    assert environment["memory_bytes"] == 51539607552

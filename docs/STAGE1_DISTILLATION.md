@@ -165,6 +165,7 @@ python scripts/render_combined_fast_blind_suite.py \
   --model /path/to/model-with-qualified-packages \
   --fast-stage1-manifest fast-stage1.json \
   --fast-stage2-manifest fast-stage2.json \
+  --runtime-revision "$(git rev-parse HEAD)" \
   --prompts packages/ltx-trainer/configs/stage2_terminal_pilot_prompts.txt \
   --output-dir /private/tmp/ltx-combined-fast-blind \
   --width 768 --height 512 --frames 241 --frame-rate 24

@@ -4,8 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import importlib.metadata
 import json
+import platform
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -21,6 +25,9 @@ class CasePlan:
     seed: int
     fast_is_a: bool
     fast_first: bool
+
+
+_IMMUTABLE_REVISION_RE = re.compile(r"[0-9a-f]{40,64}")
 
 
 def _read_prompts(path: Path) -> list[str]:
@@ -96,6 +103,42 @@ def _run_timed(command: list[str]) -> float:
     return time.monotonic() - started
 
 
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _sysctl(name: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["sysctl", "-n", name],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+    return result.stdout.strip() or None
+
+
+def _environment() -> dict[str, object]:
+    memory = _sysctl("hw.memsize")
+    try:
+        mlx_version = importlib.metadata.version("mlx")
+    except importlib.metadata.PackageNotFoundError:
+        mlx_version = None
+    return {
+        "platform": platform.platform(),
+        "chip": _sysctl("machdep.cpu.brand_string") or platform.processor() or None,
+        "memory_bytes": int(memory) if memory is not None else None,
+        "python": platform.python_version(),
+        "mlx": mlx_version,
+    }
+
+
 def _review_case(plan: CasePlan, output_dir: Path) -> dict[str, object]:
     case = output_dir / f"case-{plan.index:02d}"
     return {
@@ -127,6 +170,7 @@ def main() -> int:
     parser.add_argument("--model", required=True)
     parser.add_argument("--fast-stage1-manifest", required=True)
     parser.add_argument("--fast-stage2-manifest", required=True)
+    parser.add_argument("--runtime-revision", required=True)
     parser.add_argument("--prompts", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--width", type=int, default=768)
@@ -138,6 +182,9 @@ def main() -> int:
     parser.add_argument("--limit", type=int)
     parser.add_argument("--ffmpeg", default="ffmpeg")
     args = parser.parse_args()
+
+    if not _IMMUTABLE_REVISION_RE.fullmatch(args.runtime_revision):
+        raise ValueError("--runtime-revision must be an immutable hexadecimal revision")
 
     prompts = _read_prompts(args.prompts)
     if args.limit is not None:
@@ -219,6 +266,8 @@ def main() -> int:
                 "seed": plan.seed,
                 **timing,
                 "speedup": speedup,
+                "standard_sha256": _sha256(standard),
+                "fast_sha256": _sha256(fast),
             }
         )
         review_cases.append(_review_case(plan, args.output_dir))
@@ -237,6 +286,8 @@ def main() -> int:
             "fast_schedule": "4+1",
             "low_ram": True,
         },
+        "runtime_revision": args.runtime_revision,
+        "environment": _environment(),
         "cases": benchmark_cases,
         "mean_standard_seconds": mean_standard,
         "mean_fast_seconds": mean_fast,
