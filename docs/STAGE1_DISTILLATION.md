@@ -213,6 +213,13 @@ exactly one `--span` is selected; use a fresh output root so the different
 budgets cannot be confused. Evaluate the complete set only on its bound
 transitions:
 
+The diagnostic-only spans `1-3` and `3-7` are also accepted by `--span`. They
+do not change the three default product-training spans. In particular, `3-7`
+is the merged-middle experiment for a five-call Stage-1 schedule that retains
+the exact high-noise `0 -> 1 -> 2 -> 3` prefix and exact `7 -> 8` final step.
+It must not be packaged or exposed as a product route until its own latent and
+decoded non-inferiority gates pass.
+
 ```bash
 python scripts/evaluate_stage1_segmented_curriculum.py \
   --model /path/to/ltx-2.5-mlx-q8/snapshot \

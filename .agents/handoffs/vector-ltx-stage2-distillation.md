@@ -436,3 +436,22 @@ uses the existing independent `3 -> 5` and `5 -> 7` adapters and exact
 protect the high-noise semantic branch and should establish whether a roughly
 1.8x quality-safe schedule exists before pursuing the remaining portable
 kernel/runtime gap to 2x.
+
+That exact-high-noise control completed the full 768x512x241 chef workload in
+301.40 seconds versus the identity-verified 539.94-second standard, a 1.791x
+speedup and 44.18% latency reduction. It used zero swap and peaked at
+40,379,845,680 bytes of process memory. Ten sampled frames preserve the chef,
+face, upper body, bread, oven, composition, and motion; unlike every compressed
+high-noise schedule, it does not omit the requested speaker. A synchronized
+side-by-side and candidate-with-audio are recorded under
+`123/strategy/ltx-exact-high-noise-chef-2026-09-15/`. This is a strong initial
+screen, not yet human or suite-level non-inferiority.
+
+The measured 4.49% 241-frame dequantized-matmul gain would project to about
+287.87 seconds and 1.876x if it composes, leaving roughly 6.22% additional
+latency reduction to cross 2x. The next experiment therefore merges only the
+middle `3 -> 7` span while keeping exact `0 -> 1 -> 2 -> 3` and `7 -> 8`.
+`train_stage1_segmented_curriculum.py --span 3-7` is diagnostic-only and does
+not alter the default three-span training set. The resulting five-call route is
+projected near 280 seconds before dispatch and 267 seconds after it, but it
+must pass held-out latent and decoded gates before packaging.

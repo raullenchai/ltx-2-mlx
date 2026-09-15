@@ -31,7 +31,10 @@ except ModuleNotFoundError:  # Direct script execution.
 
 
 SEGMENT_PHASES = PRIMARY_PHASES[:3]
-DIAGNOSTIC_PHASES = (Phase("diagnostic-1-3", 1, 3, 0.99375, 0.98125, 1, 100, 5.0e-5, 20),)
+DIAGNOSTIC_PHASES = (
+    Phase("diagnostic-1-3", 1, 3, 0.99375, 0.98125, 1, 100, 5.0e-5, 20),
+    Phase("diagnostic-3-7", 3, 7, 0.98125, 0.421875, 3, 100, 3.0e-5, 20),
+)
 AVAILABLE_PHASES = SEGMENT_PHASES + DIAGNOSTIC_PHASES
 
 
