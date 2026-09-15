@@ -231,3 +231,25 @@ analyzer supervisors must set `PATH=/opt/homebrew/bin:$PATH` explicitly.
 The matched Stage-1 lane-v1 `0 -> 3` pilot is now running. Step 5 measured
 17.76 seconds/step, projecting about 29 minutes for 100 steps before held-out
 evaluation and the otherwise identical span-v2 pilot.
+
+## Stage-1 coupling selection result (2026-09-14)
+
+The matched 100-step pilots completed in 29.4 minutes each at 19.79 GiB peak.
+The v1 single-lane control barely learned: loss moved from 5513 at step 5 to
+5366 at step 100, and held-out video/audio MSE improved only 2.84%/1.69%.
+
+Span-v2 changed only the noise coupling. Its loss moved from 334 at step 5 to
+202 at step 100: 93.9% lower than v1 at step 5 and 96.2% lower at completion.
+On the same prompt-disjoint held-out pair, video MSE changed
+`0.06032 -> 0.04016` (-33.42%) and audio MSE changed
+`0.05833 -> 0.03980` (-31.78%). Both samples improved in both modalities, so
+the predeclared 10% mean / 5% worst-sample compute gate passed. This strongly
+supports hidden fine noise as the v1 target pathology; it still does not prove
+decoded perceptual non-inferiority.
+
+The full span-v2 four-transition shared-adapter curriculum is now running.
+Before it started, a fresh-phase handoff bug was fixed at `c30cb68`: the newly
+trained path had omitted the selected coupling when validating a checkpoint
+and would have rejected a valid span-v2 sampler under the default v1 rule.
+Fresh and resumed phases now share one required-checkpoint validator. Full
+tests pass: `736 passed, 22 skipped`.
