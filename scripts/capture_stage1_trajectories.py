@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
+
+from safetensors import safe_open
 
 try:
     from scripts.capture_stage2_trajectories import CaptureRequest, _read_manifest, _read_prompts
@@ -45,6 +48,11 @@ def _reuse_condition(source_root: Path, output: Path, index: int) -> Path:
     source = source_precomputed / "conditions" / f"condition_{index:04d}.safetensors"
     if not source.is_file():
         raise FileNotFoundError(f"reused condition not found: {source}")
+    with safe_open(source, framework="numpy") as condition:
+        required = {"video_prompt_embeds", "audio_prompt_embeds", "prompt_attention_mask"}
+        missing = required.difference(condition.keys())
+    if missing:
+        raise ValueError(f"reused condition {source} is missing tensors: {sorted(missing)}")
     destination = output / ".precomputed" / "stage1_conditions" / f"latent_{index:04d}.safetensors"
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.exists():
@@ -53,6 +61,26 @@ def _reuse_condition(source_root: Path, output: Path, index: int) -> Path:
     else:
         os.link(source, destination)
     return destination
+
+
+def _reuse_manifest_prompts(source_root: Path) -> dict[int, str]:
+    root = source_root.parent if source_root.name == ".precomputed" else source_root
+    manifest = root / "manifest.jsonl"
+    if not manifest.is_file():
+        raise FileNotFoundError(f"condition reuse requires its source manifest: {manifest}")
+    prompts: dict[int, str] = {}
+    for line_number, line in enumerate(manifest.read_text().splitlines(), start=1):
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        index = record.get("index")
+        prompt = record.get("prompt")
+        if isinstance(index, bool) or not isinstance(index, int) or not isinstance(prompt, str) or not prompt:
+            raise ValueError(f"invalid condition source manifest record at line {line_number}")
+        if index in prompts:
+            raise ValueError(f"duplicate condition source manifest index: {index}")
+        prompts[index] = prompt
+    return prompts
 
 
 def main() -> int:
@@ -100,10 +128,13 @@ def main() -> int:
         requests = requests[: args.limit]
     if not requests:
         raise ValueError("no capture requests remain after filtering")
+    reuse_prompts = _reuse_manifest_prompts(args.reuse_conditions_from) if args.reuse_conditions_from else None
 
     for progress, request in enumerate(requests, start=1):
         expected = _expected_paths(args.output, request.index)
         if args.reuse_conditions_from is not None:
+            if reuse_prompts is None or reuse_prompts.get(request.index) != request.prompt:
+                raise ValueError(f"reused condition manifest prompt mismatch for index {request.index}")
             _reuse_condition(args.reuse_conditions_from, args.output, request.index)
         generated = expected[:-1] if args.reuse_conditions_from is not None else expected
         present = [path for path in generated if path.exists()]
