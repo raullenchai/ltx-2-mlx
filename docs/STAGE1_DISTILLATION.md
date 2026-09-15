@@ -228,6 +228,12 @@ MZR-3 768x512x241 route `[0,1,2,3,7,8]` plus terminal-fast Stage 2 measured
 diagnostic evidence, not permission to package or default the route; decoded
 human and broader-suite gates remain authoritative.
 
+Composing that route with the qualified opt-in dequantized-matmul dispatch
+measured 270.01 seconds on the same workload, or 1.9997x and 49.985% lower
+latency. The strict 2x boundary is 269.97 seconds, so do not round this result
+up to a 2x claim. The combined run retained zero swap and the sampled chef
+subject; full human and suite qualification still apply.
+
 ```bash
 python scripts/evaluate_stage1_segmented_curriculum.py \
   --model /path/to/ltx-2.5-mlx-q8/snapshot \

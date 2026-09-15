@@ -467,5 +467,9 @@ versus the 539.94-second standard, with zero swap and a 40,381,926,520-byte
 peak process footprint. Ten sampled frames keep the same male chef, face,
 upper body, bread, oven, composition, and action sequence, passing the prior
 categorical subject-preservation gate. Human detail/motion/audio review and a
-broader suite remain open. The measured dispatch gain projects 265.88 seconds
-or 2.031x; a combined run is still required before claiming measured 2x.
+broader suite remain open. The real merged-middle plus dequantized-matmul
+dispatch run completed in 270.01 seconds: 1.9997x and 49.985% lower latency,
+zero swap, and a 39,464,962,808-byte peak footprint. It misses the strict
+269.97-second 2x boundary by 0.04 seconds and must not be rounded into a 2x
+claim. All ten sampled frames still retain the chef and action sequence; SSIM
+against the non-dispatch merged-middle render is 0.963892.
