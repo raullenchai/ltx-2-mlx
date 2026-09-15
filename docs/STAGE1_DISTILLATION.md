@@ -21,6 +21,24 @@ Each boundary carries the generation seed, ancestral noise seed, original step
 index, sigma, video/audio latents and prompt conditioning. Capture is resumable
 and refuses partial items.
 
+When the same manifest was already captured for Stage 2, avoid duplicating the
+large prompt embeddings by hard-linking its conditions:
+
+```bash
+python scripts/capture_stage1_trajectories.py \
+  --model /path/to/ltx-2.5-mlx-q8/snapshot \
+  --manifest /path/to/manifest.jsonl \
+  --bucket 468 \
+  --output /private/tmp/LTX-stage1-trajectories \
+  --reuse-conditions-from /path/to/stage2-split \
+  --low-ram-streaming
+```
+
+The source and destination must be on the same filesystem. Existing
+destinations are accepted only when they are the same inode; a different file
+fails closed. This mode reuses conditioning only—every Stage-1 latent boundary
+is still freshly captured.
+
 ## Two distinct experiments
 
 `stage1_transition_distill.yaml` maps captured boundaries `6 -> 8` directly to

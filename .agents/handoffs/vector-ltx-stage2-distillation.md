@@ -340,3 +340,13 @@ adapters on the same new validation set and combines the broad early adapter
 with the independent middle/late adapters for the held-out chef decode. This
 keeps the known failing chef prompt/seed out of training while distinguishing
 data under-coverage from cumulative adapter interference.
+
+The initial 60-trajectory broad capture would have duplicated about 755 MB of
+prompt embeddings and violated the remote free-space margin. Upstream
+`ce31075` adds `--reuse-conditions-from`: Stage-1 capture hard-links the exact
+already-captured Stage-2 condition file for the same manifest index and writes
+only fresh Stage-1 video/audio boundaries. It rejects a missing source or a
+different existing destination. Full tests pass: `775 passed, 22 skipped`.
+The queued broad control now uses the frozen Stage-2 split conditions on the
+same filesystem; no cache redirection, model download, or source deletion is
+required.
