@@ -474,6 +474,7 @@ class TrainingStrategyConfig(ConfigBaseModel):
     ancestral_eta: float = Field(default=1.0, ge=0, le=1)
     ancestral_s_noise: float = Field(default=1.0, ge=0)
     curriculum_noise_coupling: Literal["lane", "span-v2"] | None = None
+    curriculum_adapter_mode: Literal["shared", "independent"] | None = None
     video_loss_weight: float = Field(default=1.0, ge=0)
     audio_loss_weight: float = Field(default=1.0, ge=0)
 

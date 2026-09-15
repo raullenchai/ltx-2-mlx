@@ -58,7 +58,12 @@ REPLAY_PHASES = tuple(
 PHASES = PRIMARY_PHASES + REPLAY_PHASES
 
 
-def validate_phase_checkpoint(path: Path, phase: Phase, noise_coupling: str = "lane") -> None:
+def validate_phase_checkpoint(
+    path: Path,
+    phase: Phase,
+    noise_coupling: str = "lane",
+    adapter_mode: str | None = None,
+) -> None:
     """Reject a stale checkpoint whose metadata does not match its phase."""
     with safe_open(path, framework="numpy") as checkpoint:
         metadata = checkpoint.metadata() or {}
@@ -76,6 +81,8 @@ def validate_phase_checkpoint(path: Path, phase: Phase, noise_coupling: str = "l
             raise ValueError(f"checkpoint {path} does not match {phase.name}: {key}")
     if noise_coupling == "span-v2" and metadata.get("stage1_curriculum_noise_coupling") != "span-v2":
         raise ValueError(f"checkpoint {path} does not declare the span-v2 curriculum")
+    if adapter_mode is not None and metadata.get("stage1_curriculum_adapter_mode") != adapter_mode:
+        raise ValueError(f"checkpoint {path} does not declare the {adapter_mode} adapter mode")
     if int(metadata.get("lora_rank", "0")) <= 0 or float(metadata.get("lora_alpha", "0")) <= 0:
         raise ValueError(f"checkpoint {path} does not declare a valid LoRA scale")
     if phase.noise_step_index is None:
@@ -96,11 +103,16 @@ def validate_phase_checkpoint(path: Path, phase: Phase, noise_coupling: str = "l
             raise ValueError(f"checkpoint {path} does not match {phase.name}: ancestral noise span")
 
 
-def require_phase_checkpoint(path: Path, phase: Phase, noise_coupling: str) -> Path:
+def require_phase_checkpoint(
+    path: Path,
+    phase: Phase,
+    noise_coupling: str,
+    adapter_mode: str | None = None,
+) -> Path:
     """Require and validate one curriculum handoff under its selected coupling."""
     if not path.is_file():
         raise FileNotFoundError(f"training completed without expected checkpoint: {path}")
-    validate_phase_checkpoint(path, phase, noise_coupling)
+    validate_phase_checkpoint(path, phase, noise_coupling, adapter_mode)
     return path
 
 
@@ -113,7 +125,10 @@ def build_config(
     output: Path,
     load_checkpoint: Path | None,
     noise_coupling: str = "lane",
+    adapter_mode: str = "shared",
 ) -> dict:
+    if adapter_mode not in ("shared", "independent"):
+        raise ValueError("stage-1 adapter mode must be shared or independent")
     model_config: dict[str, object] = {
         "model_path": str(model),
         "transformer_file": transformer_file,
@@ -133,6 +148,7 @@ def build_config(
         "conditions_dir": "stage1_conditions",
         "video_loss_weight": 1.0,
         "audio_loss_weight": 1.0,
+        "curriculum_adapter_mode": adapter_mode,
     }
     if noise_coupling == "span-v2":
         strategy["curriculum_noise_coupling"] = "span-v2"

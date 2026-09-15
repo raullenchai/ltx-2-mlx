@@ -135,6 +135,7 @@ def get_training_strategy(config: TrainingStrategyConfig | object) -> TrainingSt
                 ancestral_eta=getattr(config, "ancestral_eta", 1.0),
                 ancestral_s_noise=getattr(config, "ancestral_s_noise", 1.0),
                 curriculum_noise_coupling=getattr(config, "curriculum_noise_coupling", None),
+                curriculum_adapter_mode=getattr(config, "curriculum_adapter_mode", None),
                 video_loss_weight=getattr(config, "video_loss_weight", 1.0),
                 audio_loss_weight=getattr(config, "audio_loss_weight", 1.0),
             )

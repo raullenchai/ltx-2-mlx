@@ -10,6 +10,8 @@ import re
 import shutil
 from pathlib import Path
 
+from safetensors import safe_open
+
 from ltx_core_mlx.loader.fast_stage1 import _config_sha256, _file_sha256
 from ltx_core_mlx.loader.fast_stage1_segmented import _read_segment
 from ltx_core_mlx.loader.integrity import transformer_sha256
@@ -52,6 +54,12 @@ def main() -> int:
     for checkpoint, span in zip(args.checkpoint, _SPANS, strict=True):
         if not checkpoint.is_file():
             raise FileNotFoundError(f"segment checkpoint not found: {checkpoint}")
+        with safe_open(checkpoint, framework="numpy") as source:
+            metadata = source.metadata() or {}
+        if metadata.get("stage1_curriculum_adapter_mode") != "independent":
+            raise ValueError(
+                f"segment checkpoint {checkpoint} must be trained independently from the clean base"
+            )
         raw = {
             "adapter_file": checkpoint.name,
             "adapter_sha256": _file_sha256(checkpoint),

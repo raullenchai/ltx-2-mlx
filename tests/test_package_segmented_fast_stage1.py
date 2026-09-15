@@ -5,6 +5,7 @@ import sys
 
 import numpy as np
 import pytest
+from safetensors import safe_open
 from safetensors.numpy import save_file
 
 from scripts.package_segmented_fast_stage1 import main
@@ -29,6 +30,7 @@ def _checkpoint(path, start, end):
             "stage1_audio_start_latents_dir": f"stage1_audio_step_{start:02d}",
             "stage1_audio_target_latents_dir": f"stage1_audio_step_{end:02d}",
             "stage1_curriculum_noise_coupling": "span-v2",
+            "stage1_curriculum_adapter_mode": "independent",
             "stage1_sampler": "ancestral_span_v2",
             "stage1_noise_step_index": str(start),
             "stage1_noise_step_end_index": str(end),
@@ -99,5 +101,21 @@ def test_rejects_wrong_checkpoint_order_before_writing(monkeypatch, tmp_path) ->
     monkeypatch.setattr(sys, "argv", argv)
 
     with pytest.raises(ValueError, match="incompatible stage1_sigma"):
+        main()
+    assert not (tmp_path / "output").exists()
+
+
+def test_rejects_cumulative_segment_checkpoint(monkeypatch, tmp_path) -> None:
+    argv = _argv(tmp_path)
+    checkpoint = argv[argv.index("--checkpoint") + 1]
+    with safe_open(checkpoint, framework="numpy") as source:
+        names = source.keys()
+        tensors = {name: source.get_tensor(name) for name in names}
+        metadata = dict(source.metadata() or {})
+    metadata["stage1_curriculum_adapter_mode"] = "shared"
+    save_file(tensors, checkpoint, metadata=metadata)
+    monkeypatch.setattr(sys, "argv", argv)
+
+    with pytest.raises(ValueError, match="independently from the clean base"):
         main()
     assert not (tmp_path / "output").exists()

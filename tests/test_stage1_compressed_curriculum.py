@@ -79,6 +79,7 @@ def test_ancestral_phase_config_is_noise_coupled_and_resumes() -> None:
         "conditions_dir": "stage1_conditions",
         "video_loss_weight": 1.0,
         "audio_loss_weight": 1.0,
+        "curriculum_adapter_mode": "shared",
         "ancestral_noise_step_index": 3,
         "ancestral_noise_total_steps": 8,
         "ancestral_eta": 1.0,
@@ -112,6 +113,22 @@ def test_span_v2_phase_config_couples_every_fine_noise_lane() -> None:
         0.421875,
         0.0,
     ]
+
+
+def test_independent_segment_config_starts_from_clean_base() -> None:
+    config = build_config(
+        phase=PRIMARY_PHASES[1],
+        model=Path("/models/ltx"),
+        transformer_file="transformer.safetensors",
+        data=Path("/data/stage1"),
+        output=Path("/output/phase"),
+        load_checkpoint=None,
+        noise_coupling="span-v2",
+        adapter_mode="independent",
+    )
+
+    assert "load_checkpoint" not in config["model"]
+    assert config["training_strategy"]["curriculum_adapter_mode"] == "independent"
 
 
 def test_terminal_phase_draws_no_noise_and_replay_is_low_lr() -> None:
@@ -179,3 +196,30 @@ def test_fresh_span_checkpoint_is_validated_with_selected_coupling(tmp_path) -> 
     assert require_phase_checkpoint(checkpoint, phase, "span-v2") == checkpoint
     with pytest.raises(ValueError, match="ancestral noise coupling"):
         require_phase_checkpoint(checkpoint, phase, "lane")
+
+
+def test_independent_resume_rejects_shared_checkpoint(tmp_path) -> None:
+    phase = PRIMARY_PHASES[0]
+    metadata = {
+        "distillation": "stage1_transition",
+        "stage1_sigma": "1.0",
+        "stage1_target_sigma": "0.98125",
+        "stage1_video_start_latents_dir": "stage1_video_step_00",
+        "stage1_video_target_latents_dir": "stage1_video_step_03",
+        "stage1_audio_start_latents_dir": "stage1_audio_step_00",
+        "stage1_audio_target_latents_dir": "stage1_audio_step_03",
+        "stage1_sampler": "ancestral_span_v2",
+        "stage1_noise_step_index": "0",
+        "stage1_noise_step_end_index": "3",
+        "stage1_noise_total_steps": "8",
+        "stage1_noise_reference_sigmas": "[1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0]",
+        "stage1_curriculum_noise_coupling": "span-v2",
+        "stage1_curriculum_adapter_mode": "shared",
+        "lora_rank": "8",
+        "lora_alpha": "8",
+    }
+    checkpoint = tmp_path / "checkpoint.safetensors"
+    save_file({"weight": np.zeros((1,), dtype=np.float32)}, checkpoint, metadata=metadata)
+
+    with pytest.raises(ValueError, match="independent adapter mode"):
+        require_phase_checkpoint(checkpoint, phase, "span-v2", "independent")

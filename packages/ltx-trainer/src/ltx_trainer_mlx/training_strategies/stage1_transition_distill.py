@@ -39,6 +39,7 @@ class Stage1TransitionDistillConfig(TrainingStrategyConfigBase):
         ancestral_eta: float = 1.0,
         ancestral_s_noise: float = 1.0,
         curriculum_noise_coupling: str | None = None,
+        curriculum_adapter_mode: str | None = None,
         video_loss_weight: float = 1.0,
         audio_loss_weight: float = 1.0,
     ) -> None:
@@ -68,6 +69,8 @@ class Stage1TransitionDistillConfig(TrainingStrategyConfigBase):
             raise ValueError("ancestral eta/noise strength is invalid")
         if curriculum_noise_coupling not in (None, "lane", "span-v2"):
             raise ValueError("unsupported stage-1 curriculum noise coupling")
+        if curriculum_adapter_mode not in (None, "shared", "independent"):
+            raise ValueError("unsupported stage-1 curriculum adapter mode")
         self.sigma = sigma
         self.target_sigma = target_sigma
         self.video_start_latents_dir = video_start_latents_dir
@@ -82,6 +85,7 @@ class Stage1TransitionDistillConfig(TrainingStrategyConfigBase):
         self.ancestral_eta = ancestral_eta
         self.ancestral_s_noise = ancestral_s_noise
         self.curriculum_noise_coupling = curriculum_noise_coupling
+        self.curriculum_adapter_mode = curriculum_adapter_mode
         self.video_loss_weight = video_loss_weight
         self.audio_loss_weight = audio_loss_weight
 
@@ -273,6 +277,8 @@ class Stage1TransitionDistillStrategy(TrainingStrategy):
         }
         if self.config.curriculum_noise_coupling is not None:
             metadata["stage1_curriculum_noise_coupling"] = self.config.curriculum_noise_coupling
+        if self.config.curriculum_adapter_mode is not None:
+            metadata["stage1_curriculum_adapter_mode"] = self.config.curriculum_adapter_mode
         if self.config.ancestral_noise_step_index is not None:
             span_v2 = self.config.ancestral_noise_step_end_index is not None
             metadata.update(
