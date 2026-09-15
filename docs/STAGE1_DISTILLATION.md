@@ -156,6 +156,27 @@ original Stage-1 behavior when the flag is absent. A separately qualified
 Stage-2 package can be composed with `--fast-stage2-manifest`; both packages
 must bind to the same base transformer. Neither package is enabled by default.
 
+After placing both qualified manifests and adapters in the immutable model
+directory, measure the composed 4+1 path against the unchanged 8+3 path with
+fresh CLI processes, identical prompts and seeds, and randomized run order:
+
+```bash
+python scripts/render_combined_fast_blind_suite.py \
+  --model /path/to/model-with-qualified-packages \
+  --fast-stage1-manifest fast-stage1.json \
+  --fast-stage2-manifest fast-stage2.json \
+  --prompts packages/ltx-trainer/configs/stage2_terminal_pilot_prompts.txt \
+  --output-dir /private/tmp/ltx-combined-fast-blind \
+  --width 768 --height 512 --frames 241 --frame-rate 24
+```
+
+The runner is resumable per completed case. It keeps role mappings and timing
+results in dotfiles so reviewers do not learn which side is fast. Export only
+the anonymous review surface with `export_blind_review_bundle.py`, record the
+human judgments, and reveal `.benchmark-results.json` only afterward. The
+reported speedup is full wall-clock time, including model loading, text
+encoding, both denoising stages, decoding, and muxing.
+
 ## Acceptance
 
 Do not productize a Stage-1 checkpoint on training loss, latent MSE or chord
