@@ -55,4 +55,3 @@ checkpoints:
 
 seed: 42
 output_dir: ./outputs/stage2_terminal_distill
-
