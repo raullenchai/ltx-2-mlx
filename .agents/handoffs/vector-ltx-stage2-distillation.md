@@ -253,3 +253,49 @@ trained path had omitted the selected coupling when validating a checkpoint
 and would have rejected a valid span-v2 sampler under the default v1 rule.
 Fresh and resumed phases now share one required-checkpoint validator. Full
 tests pass: `736 passed, 22 skipped`.
+
+## Clean-final and segmented Stage-1 results (2026-09-14)
+
+The four-primary/four-replay curriculum completed. The shared adapter improved
+the first three held-out transitions but regressed the already-uncompressed
+`7 -> 8` step by 51834%/1525% video/audio MSE; its decoded 25-frame sample also
+showed severe grayscale and structural collapse. The shared artifact is
+rejected. A clean-final lifecycle retained the base `7 -> 8` evaluation and
+measured 47.95 seconds versus standard 78.80 seconds at 768x512x25 (1.64x),
+but did not repair decoded quality.
+
+Per-transition evaluation then isolated strong sigma-region interference. The
+primary `0 -> 3` checkpoint improved its own held-out video/audio MSE by
+36.0%/31.3%, and the primary `3 -> 5` checkpoint improved its own region by
+78.1%/78.8%; applying specialized weights outside their region produced
+18-40% regressions.
+
+Upstream `cc9091b` adds a segmented contract and lifecycle. Three exact
+span-v2 adapters run only their bound `0 -> 3`, `3 -> 5`, and `5 -> 7`
+transitions, preserving the same seeded span noise; the immutable clean base
+runs `7 -> 8`. Each boundary materializes video/audio before the prior model
+is released. The manifest binds adapter order/digests/shapes, exact schedules,
+base content/config/revision, qualification revision, and runtime major.
+Shared and segmented manifests are mutually exclusive. Non-diagnostic adapter
+symlinks fail closed. No hardware identity selects the path. Full tests pass:
+`767 passed, 22 skipped`.
+
+The MZR-3 diagnostic package reuses the three existing primary checkpoints by
+symlink because the host has only about 1 GiB free. A real 768x512 25-frame
+combined `4 + 1` smoke completed in 46.47 seconds versus the prior standard
+78.80 seconds (1.70x), with zero swap. Its contact sheet has none of the
+shared-adapter grayscale/structure collapse, although its composition diverges
+from the same-seed standard output and therefore is not a non-inferiority pass.
+
+A 768x512 241-frame mountain-bike combined render completed in 259.65 seconds
+with zero swap and 40.86 GB peak process footprint. Ten sampled frames retain
+the rider, bicycle, forest, and motion across both standard and segmented
+outputs. Human review must still judge motion blur, detail, audio content, and
+sync. A fresh independent standard `8 + 3` CLI run for the identical prompt
+and seed completed in 539.94 seconds. The segmented candidate is therefore
+2.079x end to end (51.91% lower latency). Both runs reported zero swap. Fast
+peak process footprint was 40.86 GB versus standard 39.65 GB, a 3.05%
+increase. The fresh standard output SHA-256 exactly matches the earlier
+teacher render, so the review pair has an identity-verified baseline. Atlas
+must keep the public/default integration blocked pending human review, a
+broader prompt/seed suite, and a second Apple GPU generation.
