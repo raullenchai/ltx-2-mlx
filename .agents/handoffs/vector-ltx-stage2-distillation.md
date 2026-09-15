@@ -212,4 +212,22 @@ fail-closed loader. It declares `ltx_stage2_terminal_v1`, schedule
 `6e8de0813b3731e1be5ccb66170e219bc1f6395052702a04f3a141cd98d749f1`.
 The diagnostic qualification label deliberately prevents treating this as a
 release-qualified artifact. A new 10-case 768x512 decoded blind suite is now
-rendering; keep the hidden mapping out of the reviewer bundle.
+complete. Without opening its mapping, aggregate A/B similarity is video SSIM
+`0.889767`, video PSNR `30.469` dB, and audio APSNR `167.780` dB. Cases 00-02
+are the lowest visual-similarity group (`0.779-0.811`), followed by case 08
+(`0.849`), and need focused human review. The terminal mean is below the
+progressive suite's `0.924042` SSIM, so terminal remains a higher perceptual-
+difference risk despite its stronger latent metrics.
+
+The safe reviewer bundle is in
+`123/strategy/ltx-stage2-terminal-qualification-2026-09-14/`: 10 cases, 32
+files, about 128 MB. It contains no hidden mapping or teacher/student-named raw
+media. The first remote analyzer supervisor failed because its non-interactive
+`PATH` omitted `/opt/homebrew/bin` and could not resolve ffmpeg; media were
+unaffected. Metrics were instead computed on Studio from an rsync allowlist of
+anonymous files, without competing with the next MZR-3 GPU job. Future remote
+analyzer supervisors must set `PATH=/opt/homebrew/bin:$PATH` explicitly.
+
+The matched Stage-1 lane-v1 `0 -> 3` pilot is now running. Step 5 measured
+17.76 seconds/step, projecting about 29 minutes for 100 steps before held-out
+evaluation and the otherwise identical span-v2 pilot.
