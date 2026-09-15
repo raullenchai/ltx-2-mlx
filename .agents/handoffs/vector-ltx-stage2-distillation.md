@@ -299,3 +299,13 @@ increase. The fresh standard output SHA-256 exactly matches the earlier
 teacher render, so the review pair has an identity-verified baseline. Atlas
 must keep the public/default integration blocked pending human review, a
 broader prompt/seed suite, and a second Apple GPU generation.
+
+The broader screen then rejected this exact checkpoint set. Five additional
+241-frame fast renders remained stable at 259.09-262.39 seconds with zero swap,
+but the chef speech case omitted the requested front-facing speaker across 20
+evenly spaced samples; standard retains the face throughout. The existing
+terminal-Stage-2-only A/B retains the face on both sides, isolating the loss to
+segmented Stage 1 or its downstream interaction rather than terminal Stage 2
+alone. Stop spending qualification compute on these three adapters. Preserve
+the portable runtime/package infrastructure, but retrain Stage 1 with broader
+semantic/distribution coverage before restarting decoded gates.
