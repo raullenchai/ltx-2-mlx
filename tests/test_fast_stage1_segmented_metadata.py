@@ -117,6 +117,20 @@ def _write_exact_prefix_package(tmp_path):
     return path, manifest
 
 
+def _write_exact_high_noise_package(tmp_path):
+    path, manifest = _write_package(tmp_path)
+    middle = manifest["segments"][1:]
+    manifest.update(
+        capability="ltx_stage1_exact_high_noise_two_middle_spans_v1",
+        schedule=[1.0, 0.99375, 0.9875, 0.98125, 0.909375, 0.421875, 0.0],
+        execution_spans=[[0, 1], [1, 2], [2, 3], [3, 5], [5, 7]],
+        learned_spans=[[3, 5], [5, 7]],
+        segments=middle,
+    )
+    path.write_text(json.dumps(manifest))
+    return path, manifest
+
+
 def test_reads_exact_three_segment_package(tmp_path) -> None:
     _, manifest = _write_package(tmp_path)
 
@@ -142,6 +156,23 @@ def test_reads_exact_prefix_middle_package_as_ordered_execution(tmp_path) -> Non
     assert [item.adapter_path is None for item in package.segments] == [True, True, True, False]
     assert package.segments[-1].artifact_sha256 == manifest["segments"][0]["adapter_sha256"]
     assert package.schedule == (1.0, 0.99375, 0.9875, 0.98125, 0.421875, 0.0)
+
+
+def test_reads_exact_high_noise_package_as_ordered_execution(tmp_path) -> None:
+    _, manifest = _write_exact_high_noise_package(tmp_path)
+
+    package = read_fast_stage1_segmented_package(tmp_path)
+
+    assert package.capability == "ltx_stage1_exact_high_noise_two_middle_spans_v1"
+    assert [(item.start_index, item.end_index) for item in package.segments] == [
+        (0, 1),
+        (1, 2),
+        (2, 3),
+        (3, 5),
+        (5, 7),
+    ]
+    assert [item.adapter_path is None for item in package.segments] == [True, True, True, False, False]
+    assert package.segments[-1].artifact_sha256 == manifest["segments"][-1]["adapter_sha256"]
 
 
 @pytest.mark.parametrize(

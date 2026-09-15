@@ -18,15 +18,32 @@ from ltx_core_mlx.loader.integrity import transformer_sha256
 from ltx_pipelines_mlx.scheduler import DISTILLED_SIGMAS
 
 _IMMUTABLE_REVISION_RE = re.compile(r"[0-9a-f]{40,64}")
-_LEARNED_SPAN = (3, 7)
-_EXECUTION_SPANS = ((0, 1), (1, 2), (2, 3), _LEARNED_SPAN)
-_SCHEDULE = tuple(DISTILLED_SIGMAS[index] for index in (0, 1, 2, 3, 7, 8))
+_PROFILES = {
+    1: {
+        "capability": "ltx_stage1_exact_prefix_middle_span_v1",
+        "learned_spans": ((3, 7),),
+        "execution_spans": ((0, 1), (1, 2), (2, 3), (3, 7)),
+        "schedule_indices": (0, 1, 2, 3, 7, 8),
+    },
+    2: {
+        "capability": "ltx_stage1_exact_high_noise_two_middle_spans_v1",
+        "learned_spans": ((3, 5), (5, 7)),
+        "execution_spans": ((0, 1), (1, 2), (2, 3), (3, 5), (5, 7)),
+        "schedule_indices": (0, 1, 2, 3, 5, 7, 8),
+    },
+}
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-dir", type=Path, required=True)
-    parser.add_argument("--checkpoint", type=Path, required=True)
+    parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        action="append",
+        required=True,
+        help="Independent middle adapter; provide 3-7 once or 3-5 then 5-7 twice",
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--base-model-id", required=True)
     parser.add_argument("--base-revision", required=True)
@@ -38,6 +55,10 @@ def main() -> int:
         help="Diagnostic scratch mode only; a distributable package must copy the adapter",
     )
     args = parser.parse_args()
+    if len(args.checkpoint) not in _PROFILES:
+        raise ValueError("exact-prefix package requires one 3-7 checkpoint or two 3-5/5-7 checkpoints")
+    profile = _PROFILES[len(args.checkpoint)]
+    learned_spans = profile["learned_spans"]
 
     if not _IMMUTABLE_REVISION_RE.fullmatch(args.base_revision):
         raise ValueError("--base-revision must be an immutable hexadecimal revision")
@@ -48,48 +69,53 @@ def main() -> int:
     transformer = args.model_dir / args.transformer_file
     if not transformer.is_file():
         raise FileNotFoundError(f"base transformer not found: {transformer}")
-    if not args.checkpoint.is_file():
-        raise FileNotFoundError(f"middle checkpoint not found: {args.checkpoint}")
-
-    with safe_open(args.checkpoint, framework="numpy") as source:
-        metadata = source.metadata() or {}
-    if metadata.get("stage1_curriculum_adapter_mode") != "independent":
-        raise ValueError("middle checkpoint must be trained independently from the clean base")
-    source_digest = _file_sha256(args.checkpoint)
-    raw = {
-        "adapter_file": args.checkpoint.name,
-        "adapter_sha256": source_digest,
-        "span": list(_LEARNED_SPAN),
-    }
-    _read_segment(args.checkpoint.parent, raw, expected_span=_LEARNED_SPAN, allow_symlink=True)
+    sources = []
+    for checkpoint, span in zip(args.checkpoint, learned_spans, strict=True):
+        if not checkpoint.is_file():
+            raise FileNotFoundError(f"middle checkpoint not found: {checkpoint}")
+        with safe_open(checkpoint, framework="numpy") as source:
+            metadata = source.metadata() or {}
+        if metadata.get("stage1_curriculum_adapter_mode") != "independent":
+            raise ValueError("middle checkpoint must be trained independently from the clean base")
+        source_digest = _file_sha256(checkpoint)
+        raw = {
+            "adapter_file": checkpoint.name,
+            "adapter_sha256": source_digest,
+            "span": list(span),
+        }
+        _read_segment(checkpoint.parent, raw, expected_span=span, allow_symlink=True)
+        sources.append((checkpoint, span, source_digest))
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    destination = args.output_dir / "fast-stage1-middle-3-7.safetensors"
-    if args.symlink_adapter:
-        destination.symlink_to(args.checkpoint.resolve())
-    else:
-        shutil.copy2(args.checkpoint, destination)
-    segment = {
-        "adapter_file": destination.name,
-        "adapter_sha256": source_digest,
-        "span": list(_LEARNED_SPAN),
-    }
-    _read_segment(
-        args.output_dir,
-        segment,
-        expected_span=_LEARNED_SPAN,
-        allow_symlink=args.symlink_adapter,
-    )
+    segments = []
+    for checkpoint, (start, end), source_digest in sources:
+        destination = args.output_dir / f"fast-stage1-middle-{start}-{end}.safetensors"
+        if args.symlink_adapter:
+            destination.symlink_to(checkpoint.resolve())
+        else:
+            shutil.copy2(checkpoint, destination)
+        segment = {
+            "adapter_file": destination.name,
+            "adapter_sha256": source_digest,
+            "span": [start, end],
+        }
+        _read_segment(
+            args.output_dir,
+            segment,
+            expected_span=(start, end),
+            allow_symlink=args.symlink_adapter,
+        )
+        segments.append(segment)
 
     manifest = {
         "schema_version": 1,
-        "capability": "ltx_stage1_exact_prefix_middle_span_v1",
-        "schedule": list(_SCHEDULE),
-        "execution_spans": [list(span) for span in _EXECUTION_SPANS],
-        "learned_spans": [list(_LEARNED_SPAN)],
+        "capability": profile["capability"],
+        "schedule": [DISTILLED_SIGMAS[index] for index in profile["schedule_indices"]],
+        "execution_spans": [list(span) for span in profile["execution_spans"]],
+        "learned_spans": [list(span) for span in learned_spans],
         "clean_final_span": [7, 8],
         "noise_reference_sigmas": list(DISTILLED_SIGMAS),
-        "segments": [segment],
+        "segments": segments,
         "base_model_id": args.base_model_id,
         "base_revision": args.base_revision,
         "transformer_file": args.transformer_file,
@@ -104,7 +130,8 @@ def main() -> int:
     temporary.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     os.replace(temporary, manifest_path)
     print(f"manifest: {manifest_path}")
-    print(f"middle: 3->7: {source_digest}")
+    for segment in segments:
+        print(f"middle: {segment['span'][0]}->{segment['span'][1]}: {segment['adapter_sha256']}")
     return 0
 
 

@@ -65,6 +65,41 @@ def _argv(tmp_path, *, mode="independent", qualification="qual-v1", symlink=Fals
     return argv
 
 
+def _two_middle_argv(tmp_path, *, qualification="qual-v1"):
+    argv = _argv(tmp_path, qualification=qualification)
+    checkpoint_index = argv.index("--checkpoint")
+    del argv[checkpoint_index : checkpoint_index + 2]
+    for start, end in ((5, 7), (3, 5)):
+        checkpoint = tmp_path / f"source-{start}-{end}.safetensors"
+        save_file(
+            {
+                "block.to_q.lora_A.weight": np.zeros((2, 4), dtype=np.float32),
+                "block.to_q.lora_B.weight": np.zeros((8, 2), dtype=np.float32),
+            },
+            checkpoint,
+            metadata={
+                "distillation": "stage1_transition",
+                "stage1_sigma": str(_SIGMAS[start]),
+                "stage1_target_sigma": str(_SIGMAS[end]),
+                "stage1_video_start_latents_dir": f"stage1_video_step_{start:02d}",
+                "stage1_video_target_latents_dir": f"stage1_video_step_{end:02d}",
+                "stage1_audio_start_latents_dir": f"stage1_audio_step_{start:02d}",
+                "stage1_audio_target_latents_dir": f"stage1_audio_step_{end:02d}",
+                "stage1_curriculum_noise_coupling": "span-v2",
+                "stage1_curriculum_adapter_mode": "independent",
+                "stage1_sampler": "ancestral_span_v2",
+                "stage1_noise_step_index": str(start),
+                "stage1_noise_step_end_index": str(end),
+                "stage1_noise_total_steps": "8",
+                "stage1_noise_reference_sigmas": json.dumps(_SIGMAS),
+                "lora_rank": "2",
+                "lora_alpha": "2",
+            },
+        )
+        argv[checkpoint_index:checkpoint_index] = ["--checkpoint", str(checkpoint)]
+    return argv
+
+
 def test_packages_exact_prefix_middle_route(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(sys, "argv", _argv(tmp_path))
 
@@ -80,6 +115,22 @@ def test_packages_exact_prefix_middle_route(monkeypatch, tmp_path) -> None:
     shutil.copy2(tmp_path / "model" / "embedded_config.json", output)
     package = read_fast_stage1_segmented_package(output, "fast-stage1-exact-prefix.json")
     assert [segment.adapter_path is None for segment in package.segments] == [True, True, True, False]
+
+
+def test_packages_exact_high_noise_two_middle_route(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(sys, "argv", _two_middle_argv(tmp_path))
+
+    assert main() == 0
+
+    output = tmp_path / "output"
+    manifest = json.loads((output / "fast-stage1-exact-prefix.json").read_text())
+    assert manifest["capability"] == "ltx_stage1_exact_high_noise_two_middle_spans_v1"
+    assert manifest["execution_spans"] == [[0, 1], [1, 2], [2, 3], [3, 5], [5, 7]]
+    assert manifest["learned_spans"] == [[3, 5], [5, 7]]
+    shutil.copy2(tmp_path / "model" / "transformer-distilled.safetensors", output)
+    shutil.copy2(tmp_path / "model" / "embedded_config.json", output)
+    package = read_fast_stage1_segmented_package(output, "fast-stage1-exact-prefix.json")
+    assert [segment.adapter_path is None for segment in package.segments] == [True, True, True, False, False]
 
 
 def test_rejects_non_independent_middle_checkpoint(monkeypatch, tmp_path) -> None:

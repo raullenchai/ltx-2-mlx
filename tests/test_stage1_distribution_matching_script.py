@@ -1,11 +1,13 @@
 import random
 from pathlib import Path
 
+import mlx.core as mx
 import pytest
 
 from scripts.train_stage1_distribution_matching import (
     DEFAULT_SCORE_SIGMAS,
     build_dmd_config,
+    sample_decode_crop,
     sample_score_sigma,
 )
 
@@ -64,3 +66,31 @@ def test_score_sigma_sampler_stays_on_native_non_terminal_schedule() -> None:
 def test_score_sigma_sampler_rejects_terminal_choices() -> None:
     with pytest.raises(ValueError, match="strictly between"):
         sample_score_sigma(random.Random(1), (0.0, 0.5))
+
+
+def test_decode_crop_sampler_is_seeded_and_stays_inside_grid() -> None:
+    batch = {
+        "video_start": {
+            "num_frames": mx.array([5]),
+            "height": mx.array([6]),
+            "width": mx.array([7]),
+        }
+    }
+
+    crop = sample_decode_crop(random.Random(3), batch, (3, 4, 4))
+
+    assert crop == sample_decode_crop(random.Random(3), batch, (3, 4, 4))
+    assert all(start >= 0 for start in crop[:3])
+    assert all(start + size <= total for start, size, total in zip(crop[:3], crop[3:], (5, 6, 7)))
+
+
+def test_decode_crop_sampler_rejects_oversize_window() -> None:
+    batch = {
+        "video_start": {
+            "num_frames": mx.array([2]),
+            "height": mx.array([2]),
+            "width": mx.array([2]),
+        }
+    }
+    with pytest.raises(ValueError, match="fit inside"):
+        sample_decode_crop(random.Random(1), batch, (3, 1, 1))

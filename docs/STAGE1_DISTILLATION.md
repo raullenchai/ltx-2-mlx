@@ -308,10 +308,23 @@ stronger control with five fake-score warmup updates, five alternating updates,
 chef decode still had severe motion smearing and structural drift. The 97.60
 second Rapid render preserves the fast execution path but fails the decoded
 quality gate. These short runs validate the implementation and reject the idea
-that a handful of DMD updates is sufficient; they do not reject a properly
-warmed, longer alternating run.
+that a handful of DMD updates is sufficient.
 
-Use periodic checkpoints for the longer control:
+A subsequent 32-update fake-score warmup plus 10 alternating generator
+updates remained finite at 39.0 GB peak memory, but its 99.94 second Studio
+chef render retained the same severe motion smearing. Direct complete-endpoint
+latent MSE plus first differences along video time/height/width and audio time
+also failed at five and ten generator updates. A stronger decoded-RGB control
+used the frozen bundled LTX-2.5 VAE on deterministic random latent crops,
+balancing RGB endpoint/gradient loss to the paired anchor with a detached
+normalizer. Eight product-grid updates took 437.7 seconds at 20.26 GB peak and
+rendered in 99.30 seconds, but changed the output without improving the
+smearing direction. These are negative quality results: do not extend the
+single `3 -> 7` adapter merely by adding more DMD, latent-gradient, or sparse
+decoded-RGB updates. Retain an additional middle evaluation instead.
+
+The rejected longer DMD control used periodic checkpoints as follows; retain
+the command for reproduction, not as the recommended next experiment:
 
 ```bash
 python scripts/train_stage1_distribution_matching.py \
@@ -363,6 +376,34 @@ digest, immutable base identity, and runtime major. It reuses the existing
 `--fast-stage1-segmented-manifest` opt-in, so the standard path and public
 disable/fallback behavior remain unchanged. A diagnostic symlink mode exists
 only for qualification revisions beginning with `diagnostic-`.
+
+The same packager accepts two independent checkpoints in `3 -> 5`, `5 -> 7`
+order and emits the quality-first
+`ltx_stage1_exact_high_noise_two_middle_spans_v1` capability. Its immutable
+execution schedule is `0 -> 1 -> 2 -> 3 -> 5 -> 7 -> 8`: the high-noise prefix
+and final step use the clean base, while only the two middle spans load LoRA.
+
+```bash
+python scripts/package_exact_prefix_fast_stage1.py \
+  --model-dir /path/to/immutable/model/snapshot \
+  --checkpoint /path/to/independent-3-5.safetensors \
+  --checkpoint /path/to/independent-5-7.safetensors \
+  --output-dir /path/to/fast-model-package \
+  --base-model-id MrMofer/ltx-2.5-mlx-q8 \
+  --base-revision 0123456789abcdef0123456789abcdef01234567 \
+  --qualification-revision qual-exact-high-noise-v1
+```
+
+The original independent rank-8 middle adapters were recovered from MZR-3 and
+verified byte-for-byte on Studio (SHA-256 `7c02e3bd...d89ca9` and
+`4b73f698...3ac87c`). The exact-high-noise route reproduced the same output
+SHA-256 (`81ad9411...4929d`) across both machines. End-to-end 768x512x241
+latency was 301.40 seconds versus 539.94 on the 48 GB M4 Pro (1.791x), and
+101.14 seconds versus 175.65 on M3 Ultra (1.737x). The Studio contact screen
+retained the face, brick texture, sleeve boundary, bread, and localized motion
+blur without the broad translucent smear produced by `3 -> 7`. This is the
+current quality-first product candidate; it is not permission to make Fast the
+default or to round either machine's result up to 2x.
 
 A full product-entry rerun loaded this manifest through
 `ltx_pipelines_mlx.cli generate` and completed in 269.21 seconds (2.0057x),

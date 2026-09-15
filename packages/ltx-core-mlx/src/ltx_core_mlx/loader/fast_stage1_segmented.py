@@ -26,6 +26,9 @@ _LEARNED_SPANS = ((0, 3), (3, 5), (5, 7))
 _HYBRID_SCHEDULE = (1.0, 0.99375, 0.9875, 0.98125, 0.421875, 0.0)
 _HYBRID_EXECUTION_SPANS = ((0, 1), (1, 2), (2, 3), (3, 7))
 _HYBRID_LEARNED_SPANS = ((3, 7),)
+_EXACT_HIGH_NOISE_SCHEDULE = (1.0, 0.99375, 0.9875, 0.98125, 0.909375, 0.421875, 0.0)
+_EXACT_HIGH_NOISE_EXECUTION_SPANS = ((0, 1), (1, 2), (2, 3), (3, 5), (5, 7))
+_EXACT_HIGH_NOISE_LEARNED_SPANS = ((3, 5), (5, 7))
 _CLEAN_FINAL_SPAN = (7, 8)
 
 
@@ -180,17 +183,29 @@ def read_fast_stage1_segmented_package(
     if capability not in {
         "ltx_stage1_segmented_span_v1",
         "ltx_stage1_exact_prefix_middle_span_v1",
+        "ltx_stage1_exact_high_noise_two_middle_spans_v1",
     }:
         raise ValueError("unsupported segmented fast stage-1 capability")
-    hybrid = capability == "ltx_stage1_exact_prefix_middle_span_v1"
-    schedule = _HYBRID_SCHEDULE if hybrid else _SCHEDULE
-    learned_spans = _HYBRID_LEARNED_SPANS if hybrid else _LEARNED_SPANS
+    profiles = {
+        "ltx_stage1_segmented_span_v1": (_SCHEDULE, _LEARNED_SPANS, None),
+        "ltx_stage1_exact_prefix_middle_span_v1": (
+            _HYBRID_SCHEDULE,
+            _HYBRID_LEARNED_SPANS,
+            _HYBRID_EXECUTION_SPANS,
+        ),
+        "ltx_stage1_exact_high_noise_two_middle_spans_v1": (
+            _EXACT_HIGH_NOISE_SCHEDULE,
+            _EXACT_HIGH_NOISE_LEARNED_SPANS,
+            _EXACT_HIGH_NOISE_EXECUTION_SPANS,
+        ),
+    }
+    schedule, learned_spans, execution_spans = profiles[capability]
     _exact_sequence(manifest.get("schedule"), schedule, "schedule")
     _exact_sequence(manifest.get("noise_reference_sigmas"), _REFERENCE_SIGMAS, "reference sigmas")
     _exact_sequence(manifest.get("learned_spans"), learned_spans, "learned spans")
     _exact_sequence(manifest.get("clean_final_span"), _CLEAN_FINAL_SPAN, "clean final span")
-    if hybrid:
-        _exact_sequence(manifest.get("execution_spans"), _HYBRID_EXECUTION_SPANS, "execution spans")
+    if execution_spans is not None:
+        _exact_sequence(manifest.get("execution_spans"), execution_spans, "execution spans")
 
     base_model_id = manifest.get("base_model_id")
     base_revision = manifest.get("base_revision")
@@ -226,7 +241,10 @@ def read_fast_stage1_segmented_package(
         raise ValueError("segmented fast stage-1 qualification revision is missing")
     raw_segments = manifest.get("segments")
     if not isinstance(raw_segments, list) or len(raw_segments) != len(learned_spans):
-        expected_count = "one adapter" if hybrid else "three adapters"
+        words = {1: "one", 2: "two", 3: "three"}
+        expected_count = f"{words.get(len(learned_spans), len(learned_spans))} adapter"
+        if len(learned_spans) != 1:
+            expected_count += "s"
         raise ValueError(f"segmented fast stage-1 requires {expected_count}")
     adapter_segments = tuple(
         _read_segment(
@@ -237,9 +255,9 @@ def read_fast_stage1_segmented_package(
         )
         for raw, span in zip(raw_segments, learned_spans, strict=True)
     )
-    if hybrid:
+    if execution_spans is not None:
         adapters = {(segment.start_index, segment.end_index): segment for segment in adapter_segments}
-        segments = tuple(adapters.get(span, _base_segment(span)) for span in _HYBRID_EXECUTION_SPANS)
+        segments = tuple(adapters.get(span, _base_segment(span)) for span in execution_spans)
     else:
         segments = adapter_segments
     return FastStage1SegmentedPackage(
