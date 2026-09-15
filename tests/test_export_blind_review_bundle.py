@@ -55,6 +55,36 @@ def test_rejects_path_escape(tmp_path) -> None:
         export_bundle(source, tmp_path / "output")
 
 
+def test_rejects_in_bundle_path_relabeling(tmp_path) -> None:
+    source = _source(tmp_path)
+    review = json.loads((source / "review-index.json").read_text())
+    review["cases"][0]["A"] = ".blind-mapping.json"
+    (source / "review-index.json").write_text(json.dumps(review))
+
+    with pytest.raises(ValueError, match=r"must be exactly case-00/A\.mp4"):
+        export_bundle(source, tmp_path / "output")
+
+
+def test_rejects_media_symlink(tmp_path) -> None:
+    source = _source(tmp_path)
+    media = source / "case-00/A.mp4"
+    media.unlink()
+    media.symlink_to(source / ".blind-mapping.json")
+
+    with pytest.raises(FileNotFoundError, match="media is missing"):
+        export_bundle(source, tmp_path / "output")
+
+
+def test_rejects_reordered_or_duplicate_case_indices(tmp_path) -> None:
+    source = _source(tmp_path)
+    review = json.loads((source / "review-index.json").read_text())
+    review["cases"][0]["index"] = 1
+    (source / "review-index.json").write_text(json.dumps(review))
+
+    with pytest.raises(ValueError, match="contiguous and ordered"):
+        export_bundle(source, tmp_path / "output")
+
+
 def test_rejects_nonempty_output_that_might_contain_mapping(tmp_path) -> None:
     output = tmp_path / "output"
     output.mkdir()
