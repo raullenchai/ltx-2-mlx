@@ -303,3 +303,13 @@ is rejected. Before changing the loss, use a prompt-disjoint broad control
 covering faces, speech, hands, fast motion, camera motion, texture, low light,
 ambience, and silence. Keep the failing prompt and seed out of training so the
 decoded check remains held out.
+
+Clean-base independence is necessary provenance, but it was not sufficient in
+the first control. Three independently trained adapters improved their own
+two-item held-out latent targets by 28.47%/31.54%, 61.04%/70.06%, and
+4.81%/6.25% video/audio respectively, yet the 241-frame chef decode still
+omitted the requested speaker. Treat this as evidence that low latent MSE on a
+narrow object-only cohort does not preserve high-level prompt semantics. The
+next controlled variable is coverage of the earliest, highest-noise span;
+keep the independently trained middle and late adapters fixed while retraining
+only `0 -> 3` on the broader prompt-disjoint cohort.

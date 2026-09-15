@@ -350,3 +350,21 @@ different existing destination. Full tests pass: `775 passed, 22 skipped`.
 The queued broad control now uses the frozen Stage-2 split conditions on the
 same filesystem; no cache redirection, model download, or source deletion is
 required.
+
+The clean-base independent control completed all three spans. Against the
+same two held-out owl trajectories, `0 -> 3` improved video/audio MSE by
+28.47%/31.54%, `3 -> 5` by 61.04%/70.06%, and `5 -> 7` by 4.81%/6.25%.
+Those improvements are smaller than the cumulative checkpoints, as expected
+after removing inherited updates. A production-shaped held-out chef decode
+still omitted the speaker and retained almost only hands, bread, and oven,
+while the correctly paired standard decode retained the chef's face and upper
+body throughout. Independent segment initialization therefore does not repair
+the semantic failure; data under-coverage remains the leading hypothesis.
+
+The first comparison accidentally selected `case-06`, which the corrected
+deterministic review index identifies as pottery, not speech. It was rejected
+before judgment and retained only in a local invalid-baseline audit directory.
+The valid chef standard is `case-05/sample-05-teacher.mp4`; all conclusions
+above use that same-prompt, same-seed pair. The broad 24-prompt `0 -> 3`
+control is now capturing trajectories. Its condition files are verified hard
+links by inode; fresh Stage-1 boundaries are only about 0.5 MiB per sample.
