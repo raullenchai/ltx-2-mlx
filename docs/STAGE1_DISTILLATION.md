@@ -220,6 +220,14 @@ the exact high-noise `0 -> 1 -> 2 -> 3` prefix and exact `7 -> 8` final step.
 It must not be packaged or exposed as a product route until its own latent and
 decoded non-inferiority gates pass.
 
+The first 48-train/12-prompt-disjoint-validation rank-4 `3 -> 7` control on an
+M3 Ultra improved held-out video/audio MSE by 15.22%/16.45%, with no sample
+regression, and took 230.25 seconds for 100 training steps. Its corresponding
+MZR-3 768x512x241 route `[0,1,2,3,7,8]` plus terminal-fast Stage 2 measured
+278.38 seconds versus 539.94 seconds standard (1.940x). This is reproducible
+diagnostic evidence, not permission to package or default the route; decoded
+human and broader-suite gates remain authoritative.
+
 ```bash
 python scripts/evaluate_stage1_segmented_curriculum.py \
   --model /path/to/ltx-2.5-mlx-q8/snapshot \

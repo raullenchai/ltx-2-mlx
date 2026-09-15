@@ -455,3 +455,17 @@ middle `3 -> 7` span while keeping exact `0 -> 1 -> 2 -> 3` and `7 -> 8`.
 not alter the default three-span training set. The resulting five-call route is
 projected near 280 seconds before dispatch and 267 seconds after it, but it
 must pass held-out latent and decoded gates before packaging.
+
+The rank-4 merged-middle run completed 100 steps on the M3 Ultra Studio in
+230.25 seconds at a trainer-reported 19.49 GB peak and zero swap. On 12
+prompt-disjoint validation trajectories it improved video/audio MSE by
+15.22%/16.45% versus the same clean-base `3 -> 7` jump. Every sample improved
+in both modalities; the weakest audio sample still improved 2.51%.
+
+The 768x512x241 MZR-3 chef decode then completed in 278.38 seconds, or 1.940x
+versus the 539.94-second standard, with zero swap and a 40,381,926,520-byte
+peak process footprint. Ten sampled frames keep the same male chef, face,
+upper body, bread, oven, composition, and action sequence, passing the prior
+categorical subject-preservation gate. Human detail/motion/audio review and a
+broader suite remain open. The measured dispatch gain projects 265.88 seconds
+or 2.031x; a combined run is still required before claiming measured 2x.
