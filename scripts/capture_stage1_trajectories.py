@@ -4,9 +4,15 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
-from capture_stage2_trajectories import CaptureRequest, _read_manifest, _read_prompts
+try:
+    from scripts.capture_stage2_trajectories import CaptureRequest, _read_manifest, _read_prompts
+except ModuleNotFoundError as exc:
+    if exc.name != "scripts":
+        raise
+    from capture_stage2_trajectories import CaptureRequest, _read_manifest, _read_prompts
 
 from ltx_core_mlx.utils.memory import aggressive_cleanup
 from ltx_pipelines_mlx.distilled import DistilledPipeline
@@ -33,6 +39,22 @@ def _expected_paths(output: Path, index: int) -> list[Path]:
     return paths
 
 
+def _reuse_condition(source_root: Path, output: Path, index: int) -> Path:
+    """Hard-link an existing Stage-2 condition under the Stage-1 filename."""
+    source_precomputed = source_root / ".precomputed" if (source_root / ".precomputed").is_dir() else source_root
+    source = source_precomputed / "conditions" / f"condition_{index:04d}.safetensors"
+    if not source.is_file():
+        raise FileNotFoundError(f"reused condition not found: {source}")
+    destination = output / ".precomputed" / "stage1_conditions" / f"latent_{index:04d}.safetensors"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        if not os.path.samefile(source, destination):
+            raise FileExistsError(f"reused condition destination has different content: {destination}")
+    else:
+        os.link(source, destination)
+    return destination
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True)
@@ -48,6 +70,11 @@ def main() -> int:
     parser.add_argument("--limit", type=int)
     parser.add_argument("--bucket")
     parser.add_argument("--low-ram-streaming", action="store_true")
+    parser.add_argument(
+        "--reuse-conditions-from",
+        type=Path,
+        help="Hard-link matching Stage-2 conditions instead of duplicating prompt embeddings",
+    )
     args = parser.parse_args()
 
     if args.manifest is not None:
@@ -76,8 +103,11 @@ def main() -> int:
 
     for progress, request in enumerate(requests, start=1):
         expected = _expected_paths(args.output, request.index)
-        present = [path for path in expected if path.exists()]
-        if len(present) == len(expected):
+        if args.reuse_conditions_from is not None:
+            _reuse_condition(args.reuse_conditions_from, args.output, request.index)
+        generated = expected[:-1] if args.reuse_conditions_from is not None else expected
+        present = [path for path in generated if path.exists()]
+        if len(present) == len(generated):
             print(f"skipped existing trajectory {progress}/{len(requests)} (index {request.index})")
             continue
         if present:
@@ -93,7 +123,13 @@ def main() -> int:
             expected_sigma = DISTILLED_SIGMAS[step_index]
             if abs(values["sigma"] - expected_sigma) > 1e-9:
                 raise RuntimeError(f"stage-1 sigma {values['sigma']} does not match schedule {expected_sigma}")
-            save_stage1_trajectory_step(args.output, _request_index, step_index, **values)
+            save_stage1_trajectory_step(
+                args.output,
+                _request_index,
+                step_index,
+                save_conditions=args.reuse_conditions_from is None,
+                **values,
+            )
             step_index += 1
             if step_index == len(DISTILLED_SIGMAS):
                 raise _CaptureCompleteError

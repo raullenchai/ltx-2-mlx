@@ -38,6 +38,7 @@ def save_stage1_trajectory_step(
     seed: int,
     prompt: str,
     overwrite: bool = False,
+    save_conditions: bool = True,
 ) -> dict[str, Path]:
     """Atomically persist one boundary of an ancestral stage-1 trajectory."""
     if index < 0 or step_index < 0:
@@ -56,7 +57,7 @@ def save_stage1_trajectory_step(
     video_source = f"stage1_video_step_{step_index:02d}"
     audio_source = f"stage1_audio_step_{step_index:02d}"
     sources = [video_source, audio_source]
-    if step_index == 0:
+    if step_index == 0 and save_conditions:
         sources.append("stage1_conditions")
     for source in sources:
         (precomputed / source).mkdir(parents=True, exist_ok=True)
@@ -66,7 +67,7 @@ def save_stage1_trajectory_step(
         video_source: precomputed / video_source / latent_name,
         audio_source: precomputed / audio_source / latent_name,
     }
-    if step_index == 0:
+    if step_index == 0 and save_conditions:
         paths["stage1_conditions"] = precomputed / "stage1_conditions" / latent_name
     existing = [path for path in paths.values() if path.exists()]
     if existing and not overwrite:
@@ -87,7 +88,7 @@ def save_stage1_trajectory_step(
         video_source: {"latents": _as_bfloat16(_without_batch(video, "video")), **metadata_arrays},
         audio_source: {"latents": _as_bfloat16(_without_batch(audio_unpatched, "audio")), **metadata_arrays},
     }
-    if step_index == 0:
+    if step_index == 0 and save_conditions:
         tensors["stage1_conditions"] = {
             "video_prompt_embeds": _as_bfloat16(_without_batch(video_text_embeds, "video_text_embeds")),
             "audio_prompt_embeds": _as_bfloat16(_without_batch(audio_text_embeds, "audio_text_embeds")),

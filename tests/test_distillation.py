@@ -316,6 +316,28 @@ def test_stage1_trajectory_step_round_trips_through_precomputed_dataset(tmp_path
     assert sample["video"]["latents"].dtype == mx.bfloat16
 
 
+def test_stage1_trajectory_can_reuse_external_conditions(tmp_path) -> None:
+    paths = save_stage1_trajectory_step(
+        tmp_path,
+        3,
+        0,
+        sigma=1.0,
+        video=mx.zeros((1, 8, 128)),
+        audio=mx.zeros((1, 3, 128)),
+        video_text_embeds=mx.zeros((1, 4, 4096)),
+        audio_text_embeds=mx.zeros((1, 4, 2048)),
+        spatial_dims=(2, 2, 2),
+        frame_rate=24.0,
+        noise_seed=10042,
+        seed=42,
+        prompt="test prompt",
+        save_conditions=False,
+    )
+
+    assert len(paths) == 2
+    assert not (tmp_path / ".precomputed/stage1_conditions").exists()
+
+
 def test_stage1_transition_strategy_reconstructs_captured_target(tmp_path) -> None:
     video_start = mx.arange(8 * 128).reshape(1, 8, 128).astype(mx.float32) / 100
     video_target = video_start * 0.8
