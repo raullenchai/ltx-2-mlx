@@ -234,6 +234,24 @@ latency. The strict 2x boundary is 269.97 seconds, so do not round this result
 up to a 2x claim. The combined run retained zero swap and the sampled chef
 subject; full human and suite qualification still apply.
 
+A fixed-prompt M3 Ultra stress test later rejected the rank-4/100-step adapter
+for visible dark/high-frequency texture artifacts and composition drift. A
+rank-8/300-step capacity control improved the same 12 prompt-disjoint
+video/audio latent MSE values by 19.62%/28.97% over clean base (versus
+15.22%/16.45% for rank 4), with 12/12 paired improvements in both modalities.
+Its decoded bakery output retained the same visible failure and slowed the
+combined path from 90.71 to 95.06 seconds. Do not continue scaling rank or MSE
+training steps from this result; change the objective to preserve decoded
+semantic and low-frequency/temporal structure.
+
+A fixed rank-4/100-step `MSE + 0.5 * per-token cosine` control then measured
+15.20%/16.21% video/audio MSE improvement, fractionally below the original
+MSE-only checkpoint's 15.22%/16.45%. It beat that checkpoint on only 4/12
+video and 3/12 audio validation samples. The control failed before decode and
+its experimental loss implementation was removed. Do not tune a cosine-weight
+sweep against this validation set; move to decoded-feature or distribution-
+matching supervision.
+
 Build its fail-closed exact-prefix package with:
 
 ```bash
