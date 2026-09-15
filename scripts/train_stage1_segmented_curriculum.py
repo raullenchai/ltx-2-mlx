@@ -35,11 +35,23 @@ def main() -> int:
     parser.add_argument("--data", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--transformer-file", default="transformer-distilled.safetensors")
+    parser.add_argument(
+        "--span",
+        action="append",
+        choices=tuple(f"{phase.start_index}-{phase.target_index}" for phase in SEGMENT_PHASES),
+        help="Train only the selected span; repeat for multiple spans (default: all three)",
+    )
     args = parser.parse_args()
 
+    selected = set(args.span or ())
+    phases = tuple(
+        phase
+        for phase in SEGMENT_PHASES
+        if not selected or f"{phase.start_index}-{phase.target_index}" in selected
+    )
     args.output_root.mkdir(parents=True, exist_ok=True)
     try:
-        for phase in SEGMENT_PHASES:
+        for phase in phases:
             output = args.output_root / phase.name
             expected = output / "checkpoints" / f"lora_weights_step_{phase.steps:05d}.safetensors"
             if expected.is_file():
@@ -79,7 +91,7 @@ def main() -> int:
         raise
 
     _write_status(args.output_root, "training-complete")
-    for phase in SEGMENT_PHASES:
+    for phase in phases:
         print(args.output_root / phase.name / "checkpoints" / f"lora_weights_step_{phase.steps:05d}.safetensors")
     return 0
 
