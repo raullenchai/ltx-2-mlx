@@ -381,6 +381,21 @@ def test_span_v2_phase_config_couples_every_fine_noise_lane() -> None:
     ]
 
 
+def test_phase_config_can_expand_lora_module_coverage() -> None:
+    targets = ["to_q", "to_k", "to_v", "to_out", "proj_in", "proj_out"]
+    config = build_config(
+        phase=PRIMARY_PHASES[0],
+        model=Path("/models/ltx"),
+        transformer_file="transformer.safetensors",
+        data=Path("/data/stage1"),
+        output=Path("/output/phase"),
+        load_checkpoint=None,
+        target_modules=targets,
+    )
+
+    assert config["lora"]["target_modules"] == targets
+
+
 def test_independent_segment_config_starts_from_clean_base() -> None:
     config = build_config(
         phase=PRIMARY_PHASES[1],

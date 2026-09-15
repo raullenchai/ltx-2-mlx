@@ -126,6 +126,7 @@ def build_config(
     load_checkpoint: Path | None,
     noise_coupling: str = "lane",
     adapter_mode: str = "shared",
+    target_modules: list[str] | None = None,
 ) -> dict:
     if adapter_mode not in ("shared", "independent"):
         raise ValueError("stage-1 adapter mode must be shared or independent")
@@ -171,7 +172,7 @@ def build_config(
             "rank": 8,
             "alpha": 8,
             "dropout": 0.0,
-            "target_modules": ["to_q", "to_k", "to_v"],
+            "target_modules": target_modules or ["to_q", "to_k", "to_v"],
         },
         "optimization": {
             "learning_rate": phase.learning_rate,
@@ -207,6 +208,12 @@ def main() -> int:
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--transformer-file", default="transformer-distilled.safetensors")
     parser.add_argument("--noise-coupling", choices=("lane", "span-v2"), default="lane")
+    parser.add_argument(
+        "--target-module",
+        action="append",
+        dest="target_modules",
+        help="LoRA module-name component to adapt (repeatable; default: to_q/to_k/to_v)",
+    )
     args = parser.parse_args()
 
     args.output_root.mkdir(parents=True, exist_ok=True)
@@ -227,6 +234,7 @@ def main() -> int:
                 output=output,
                 load_checkpoint=checkpoint,
                 noise_coupling=args.noise_coupling,
+                target_modules=args.target_modules,
             )
             config_path = output / "training-config.yaml"
             config_path.write_text(yaml.safe_dump(config, sort_keys=False))

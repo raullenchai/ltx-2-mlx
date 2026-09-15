@@ -252,6 +252,18 @@ its experimental loss implementation was removed. Do not tune a cosine-weight
 sweep against this validation set; move to decoded-feature or distribution-
 matching supervision.
 
+A same-budget module-coverage control retained rank 4, 100 steps, the fixed
+dataset, seed, and learning rate, but expanded LoRA targets from Q/K/V to also
+include attention output and feed-forward input/output projections. It trained
+in 4.2 minutes at 19.8 GB peak memory. Held-out video/audio MSE improved by
+16.52%/23.31% over clean base and by another 1.53%/8.21% over the QKV-only
+checkpoint, with 12/12 paired wins in both modalities. Its real 10-second
+Rapid decode still showed the same dark mesh/metallic texture artifacts and
+composition drift, and slowed to 95.49 seconds (1.840x versus standard).
+Do not expand LoRA coverage further: paired latent regression is not tracking
+decoded quality for this transition. The next training objective must add a
+decoded-feature/reward or distribution-matching signal.
+
 Build its fail-closed exact-prefix package with:
 
 ```bash

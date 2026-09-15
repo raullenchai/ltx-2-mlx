@@ -87,6 +87,12 @@ def main() -> int:
         default=8,
         help="LoRA rank for newly trained independent spans (alpha tracks rank; default: 8)",
     )
+    parser.add_argument(
+        "--target-module",
+        action="append",
+        dest="target_modules",
+        help="LoRA module-name component to adapt (repeatable; default: to_q/to_k/to_v)",
+    )
     args = parser.parse_args()
 
     if args.rank <= 0:
@@ -114,6 +120,7 @@ def main() -> int:
                 load_checkpoint=None,
                 noise_coupling="span-v2",
                 adapter_mode="independent",
+                target_modules=args.target_modules,
             )
             config["lora"]["rank"] = args.rank
             config["lora"]["alpha"] = args.rank
