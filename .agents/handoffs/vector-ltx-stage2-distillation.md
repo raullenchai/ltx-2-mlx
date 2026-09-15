@@ -485,3 +485,12 @@ loads successfully; focused tests pass 31/31 and the full suite passes 802
 with 22 skips. Standard generation remains unchanged when the existing
 segmented-manifest flag is absent. Atlas still owns release qualification and
 default policy after human and broader-suite gates.
+
+The real product entry point has now run end to end: `ltx_pipelines_mlx.cli
+generate` loaded the exact-prefix manifest, composed the dequantized-matmul
+dispatch and terminal-fast Stage 2, and completed in 269.21 seconds (2.0057x),
+zero swap, with a 40,371,407,824-byte peak footprint. Its MP4 SHA-256 exactly
+matches the prior 270.01-second research-path combined render. Across the two
+combined runs, the range is 269.21-270.01 seconds and the median is 269.61
+seconds (about 2.001x). Because the range straddles the strict 269.97-second 2x
+boundary, describe the result as approximately 2x, not stably greater than 2x.

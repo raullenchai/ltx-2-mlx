@@ -256,6 +256,13 @@ digest, immutable base identity, and runtime major. It reuses the existing
 disable/fallback behavior remain unchanged. A diagnostic symlink mode exists
 only for qualification revisions beginning with `diagnostic-`.
 
+A full product-entry rerun loaded this manifest through
+`ltx_pipelines_mlx.cli generate` and completed in 269.21 seconds (2.0057x),
+with zero swap. It produced the exact same MP4 SHA-256 as the 270.01-second
+research-path combined run. The two-run median is 269.61 seconds, or about
+2.001x; report the result as approximately 2x because the measured range
+straddles the strict 269.97-second threshold.
+
 ```bash
 python scripts/evaluate_stage1_segmented_curriculum.py \
   --model /path/to/ltx-2.5-mlx-q8/snapshot \
