@@ -217,8 +217,8 @@ The diagnostic-only spans `1-3` and `3-7` are also accepted by `--span`. They
 do not change the three default product-training spans. In particular, `3-7`
 is the merged-middle experiment for a five-call Stage-1 schedule that retains
 the exact high-noise `0 -> 1 -> 2 -> 3` prefix and exact `7 -> 8` final step.
-It must not be packaged or exposed as a product route until its own latent and
-decoded non-inferiority gates pass.
+It must not receive a release qualification or be exposed as a default until
+its own latent and decoded non-inferiority gates pass.
 
 The first 48-train/12-prompt-disjoint-validation rank-4 `3 -> 7` control on an
 M3 Ultra improved held-out video/audio MSE by 15.22%/16.45%, with no sample
@@ -233,6 +233,28 @@ measured 270.01 seconds on the same workload, or 1.9997x and 49.985% lower
 latency. The strict 2x boundary is 269.97 seconds, so do not round this result
 up to a 2x claim. The combined run retained zero swap and the sampled chef
 subject; full human and suite qualification still apply.
+
+Build its fail-closed exact-prefix package with:
+
+```bash
+python scripts/package_exact_prefix_fast_stage1.py \
+  --model-dir /path/to/immutable/model/snapshot \
+  --checkpoint /path/to/qualified-3-7.safetensors \
+  --output-dir /path/to/package \
+  --base-model-id owner/model \
+  --base-revision 0123456789abcdef0123456789abcdef01234567 \
+  --qualification-revision qual-exact-prefix-v1
+```
+
+The package uses capability `ltx_stage1_exact_prefix_middle_span_v1` and
+normalizes to four ancestral execution spans: three clean-base single steps
+and one bound `3 -> 7` adapter, followed by the existing clean-base final
+correction. The loader accepts only that fixed schedule and validates the
+adapter's independent provenance, span/noise metadata, LoRA shape, artifact
+digest, immutable base identity, and runtime major. It reuses the existing
+`--fast-stage1-segmented-manifest` opt-in, so the standard path and public
+disable/fallback behavior remain unchanged. A diagnostic symlink mode exists
+only for qualification revisions beginning with `diagnostic-`.
 
 ```bash
 python scripts/evaluate_stage1_segmented_curriculum.py \

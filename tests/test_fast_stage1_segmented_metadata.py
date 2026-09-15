@@ -75,6 +75,45 @@ def _write_package(tmp_path):
     return manifest_path, manifest
 
 
+def _write_exact_prefix_package(tmp_path):
+    path, manifest = _write_package(tmp_path)
+    middle = manifest["segments"][1]
+    middle["span"] = [3, 7]
+    manifest.update(
+        capability="ltx_stage1_exact_prefix_middle_span_v1",
+        schedule=[1.0, 0.99375, 0.9875, 0.98125, 0.421875, 0.0],
+        execution_spans=[[0, 1], [1, 2], [2, 3], [3, 7]],
+        learned_spans=[[3, 7]],
+        segments=[middle],
+    )
+    source = tmp_path / middle["adapter_file"]
+    tensors = {
+        "block.to_q.lora_A.weight": np.zeros((2, 4), dtype=np.float32),
+        "block.to_q.lora_B.weight": np.zeros((8, 2), dtype=np.float32),
+    }
+    metadata = {
+        "distillation": "stage1_transition",
+        "stage1_sigma": str(_SIGMAS[3]),
+        "stage1_target_sigma": str(_SIGMAS[7]),
+        "stage1_video_start_latents_dir": "stage1_video_step_03",
+        "stage1_video_target_latents_dir": "stage1_video_step_07",
+        "stage1_audio_start_latents_dir": "stage1_audio_step_03",
+        "stage1_audio_target_latents_dir": "stage1_audio_step_07",
+        "stage1_curriculum_noise_coupling": "span-v2",
+        "stage1_sampler": "ancestral_span_v2",
+        "stage1_noise_step_index": "3",
+        "stage1_noise_step_end_index": "7",
+        "stage1_noise_total_steps": "8",
+        "stage1_noise_reference_sigmas": json.dumps(_SIGMAS),
+        "lora_rank": "2",
+        "lora_alpha": "2",
+    }
+    save_file(tensors, source, metadata=metadata)
+    middle["adapter_sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
+    path.write_text(json.dumps(manifest))
+    return path, manifest
+
+
 def test_reads_exact_three_segment_package(tmp_path) -> None:
     _, manifest = _write_package(tmp_path)
 
@@ -83,6 +122,40 @@ def test_reads_exact_three_segment_package(tmp_path) -> None:
     assert [(item.start_index, item.end_index) for item in package.segments] == list(_SPANS)
     assert package.schedule == (1.0, 0.98125, 0.909375, 0.421875, 0.0)
     assert package.transformer_sha256 == manifest["transformer_sha256"]
+
+
+def test_reads_exact_prefix_middle_package_as_ordered_execution(tmp_path) -> None:
+    _, manifest = _write_exact_prefix_package(tmp_path)
+
+    package = read_fast_stage1_segmented_package(tmp_path)
+
+    assert package.capability == "ltx_stage1_exact_prefix_middle_span_v1"
+    assert [(item.start_index, item.end_index) for item in package.segments] == [
+        (0, 1),
+        (1, 2),
+        (2, 3),
+        (3, 7),
+    ]
+    assert [item.adapter_path is None for item in package.segments] == [True, True, True, False]
+    assert package.segments[-1].artifact_sha256 == manifest["segments"][0]["adapter_sha256"]
+    assert package.schedule == (1.0, 0.99375, 0.9875, 0.98125, 0.421875, 0.0)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "match"),
+    [
+        ("execution_spans", [[0, 1], [1, 3], [3, 7]], "execution spans"),
+        ("learned_spans", [[3, 5]], "learned spans"),
+        ("segments", [], "one adapter"),
+    ],
+)
+def test_rejects_exact_prefix_contract_changes(tmp_path, field, value, match) -> None:
+    path, manifest = _write_exact_prefix_package(tmp_path)
+    manifest[field] = value
+    path.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match=match):
+        read_fast_stage1_segmented_package(tmp_path)
 
 
 @pytest.mark.parametrize(

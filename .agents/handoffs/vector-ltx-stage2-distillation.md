@@ -473,3 +473,15 @@ zero swap, and a 39,464,962,808-byte peak footprint. It misses the strict
 269.97-second 2x boundary by 0.04 seconds and must not be rounded into a 2x
 claim. All ten sampled frames still retain the chef and action sequence; SSIM
 against the non-dispatch merged-middle render is 0.963892.
+
+Product-contract implementation is now in progress without changing the CLI
+surface or default. The segmented loader accepts a second exact capability,
+`ltx_stage1_exact_prefix_middle_span_v1`, normalizes it to exact `0 -> 1`,
+`1 -> 2`, `2 -> 3`, learned `3 -> 7`, and exact-final `7 -> 8`, and rejects
+any other schedule or adapter span. A dedicated packager binds immutable base,
+config/transformer/checkpoint digests, independent training provenance, noise
+metadata, rank/shapes, and runtime major. The first real diagnostic manifest
+loads successfully; focused tests pass 31/31 and the full suite passes 802
+with 22 skips. Standard generation remains unchanged when the existing
+segmented-manifest flag is absent. Atlas still owns release qualification and
+default policy after human and broader-suite gates.

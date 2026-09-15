@@ -208,7 +208,11 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
                     package = self._fast_stage1_segmented_package
                     first = package.segments[0]
                     adapter_path = first.adapter_path
-                    strength = first.lora_alpha / first.lora_rank
+                    strength = (
+                        first.lora_alpha / first.lora_rank
+                        if first.lora_alpha is not None and first.lora_rank is not None
+                        else None
+                    )
                 else:
                     assert self._fast_stage1_package is not None
                     package = self._fast_stage1_package
@@ -216,11 +220,11 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
                     strength = package.contract.lora_alpha / package.contract.lora_rank
                 base_spans = getattr(self, "_diagnostic_base_stage1_spans", frozenset())
                 if self._fast_stage1_segmented_package is not None and (
-                    first.start_index,
-                    first.end_index,
-                ) in base_spans:
+                    adapter_path is None or (first.start_index, first.end_index) in base_spans
+                ):
                     self.dit = self._load_transformer_with_optional_streaming(package.transformer_path)
                 else:
+                    assert adapter_path is not None and strength is not None
                     self._pending_loras = [(str(adapter_path), strength)]
                     try:
                         self.dit = self._load_transformer_with_optional_streaming(package.transformer_path)
@@ -310,7 +314,7 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
         latent_shape: tuple[int, int, int],
         noise_seed: int,
     ) -> DenoiseOutput:
-        """Run each coarse transition with its bound adapter, then clean base."""
+        """Run each validated adapter/base transition, then clean base."""
         package = self._fast_stage1_segmented_package
         assert package is not None
         assert self.dit is not None
@@ -321,9 +325,10 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
             for index, segment in enumerate(package.segments):
                 if index:
                     base_spans = getattr(self, "_diagnostic_base_stage1_spans", frozenset())
-                    if (segment.start_index, segment.end_index) in base_spans:
+                    if segment.adapter_path is None or (segment.start_index, segment.end_index) in base_spans:
                         self.dit = self._load_transformer_with_optional_streaming(package.transformer_path)
                     else:
+                        assert segment.lora_alpha is not None and segment.lora_rank is not None
                         self._pending_loras = [
                             (str(segment.adapter_path), segment.lora_alpha / segment.lora_rank)
                         ]

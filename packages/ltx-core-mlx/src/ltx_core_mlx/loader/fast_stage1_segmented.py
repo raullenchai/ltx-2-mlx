@@ -23,19 +23,22 @@ from ltx_core_mlx.loader.integrity import transformer_sha256
 _SCHEDULE = (1.0, 0.98125, 0.909375, 0.421875, 0.0)
 _REFERENCE_SIGMAS = (1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0)
 _LEARNED_SPANS = ((0, 3), (3, 5), (5, 7))
+_HYBRID_SCHEDULE = (1.0, 0.99375, 0.9875, 0.98125, 0.421875, 0.0)
+_HYBRID_EXECUTION_SPANS = ((0, 1), (1, 2), (2, 3), (3, 7))
+_HYBRID_LEARNED_SPANS = ((3, 7),)
 _CLEAN_FINAL_SPAN = (7, 8)
 
 
 @dataclass(frozen=True)
 class FastStage1Segment:
-    adapter_path: Path
-    artifact_sha256: str
+    adapter_path: Path | None
+    artifact_sha256: str | None
     start_index: int
     end_index: int
     sigma: float
     target_sigma: float
-    lora_rank: int
-    lora_alpha: float
+    lora_rank: int | None
+    lora_alpha: float | None
 
 
 @dataclass(frozen=True)
@@ -52,6 +55,7 @@ class FastStage1SegmentedPackage:
     pipeline_family: str
     runtime_contract_major: int
     qualification_revision: str
+    capability: str = "ltx_stage1_segmented_span_v1"
 
 
 def _matches_exact_sequence(value: object, expected: tuple) -> bool:
@@ -138,6 +142,20 @@ def _read_segment(
     )
 
 
+def _base_segment(span: tuple[int, int]) -> FastStage1Segment:
+    start, end = span
+    return FastStage1Segment(
+        adapter_path=None,
+        artifact_sha256=None,
+        start_index=start,
+        end_index=end,
+        sigma=_REFERENCE_SIGMAS[start],
+        target_sigma=_REFERENCE_SIGMAS[end],
+        lora_rank=None,
+        lora_alpha=None,
+    )
+
+
 def read_fast_stage1_segmented_package(
     model_dir: str | Path,
     manifest_name: str = "fast-stage1-segmented.json",
@@ -157,12 +175,21 @@ def read_fast_stage1_segmented_package(
         or manifest.get("schema_version") != 1
     ):
         raise ValueError("segmented fast stage-1 manifest requires schema_version=1")
-    if manifest.get("capability") != "ltx_stage1_segmented_span_v1":
+    capability = manifest.get("capability")
+    if capability not in {
+        "ltx_stage1_segmented_span_v1",
+        "ltx_stage1_exact_prefix_middle_span_v1",
+    }:
         raise ValueError("unsupported segmented fast stage-1 capability")
-    _exact_sequence(manifest.get("schedule"), _SCHEDULE, "schedule")
+    hybrid = capability == "ltx_stage1_exact_prefix_middle_span_v1"
+    schedule = _HYBRID_SCHEDULE if hybrid else _SCHEDULE
+    learned_spans = _HYBRID_LEARNED_SPANS if hybrid else _LEARNED_SPANS
+    _exact_sequence(manifest.get("schedule"), schedule, "schedule")
     _exact_sequence(manifest.get("noise_reference_sigmas"), _REFERENCE_SIGMAS, "reference sigmas")
-    _exact_sequence(manifest.get("learned_spans"), _LEARNED_SPANS, "learned spans")
+    _exact_sequence(manifest.get("learned_spans"), learned_spans, "learned spans")
     _exact_sequence(manifest.get("clean_final_span"), _CLEAN_FINAL_SPAN, "clean final span")
+    if hybrid:
+        _exact_sequence(manifest.get("execution_spans"), _HYBRID_EXECUTION_SPANS, "execution spans")
 
     base_model_id = manifest.get("base_model_id")
     base_revision = manifest.get("base_revision")
@@ -197,21 +224,27 @@ def read_fast_stage1_segmented_package(
     if not isinstance(qualification_revision, str) or not qualification_revision:
         raise ValueError("segmented fast stage-1 qualification revision is missing")
     raw_segments = manifest.get("segments")
-    if not isinstance(raw_segments, list) or len(raw_segments) != len(_LEARNED_SPANS):
-        raise ValueError("segmented fast stage-1 requires three adapters")
-    segments = tuple(
+    if not isinstance(raw_segments, list) or len(raw_segments) != len(learned_spans):
+        expected_count = "one adapter" if hybrid else "three adapters"
+        raise ValueError(f"segmented fast stage-1 requires {expected_count}")
+    adapter_segments = tuple(
         _read_segment(
             root,
             raw,
             expected_span=span,
             allow_symlink=qualification_revision.startswith("diagnostic-"),
         )
-        for raw, span in zip(raw_segments, _LEARNED_SPANS, strict=True)
+        for raw, span in zip(raw_segments, learned_spans, strict=True)
     )
+    if hybrid:
+        adapters = {(segment.start_index, segment.end_index): segment for segment in adapter_segments}
+        segments = tuple(adapters.get(span, _base_segment(span)) for span in _HYBRID_EXECUTION_SPANS)
+    else:
+        segments = adapter_segments
     return FastStage1SegmentedPackage(
         segments=segments,
         transformer_path=transformer_path,
-        schedule=_SCHEDULE,
+        schedule=schedule,
         noise_reference_sigmas=_REFERENCE_SIGMAS,
         noise_total_steps=8,
         base_model_id=base_model_id,
@@ -221,6 +254,7 @@ def read_fast_stage1_segmented_package(
         pipeline_family=pipeline_family,
         runtime_contract_major=declared_runtime,
         qualification_revision=qualification_revision,
+        capability=capability,
     )
 
 
