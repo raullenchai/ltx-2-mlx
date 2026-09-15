@@ -264,6 +264,44 @@ Do not expand LoRA coverage further: paired latent regression is not tracking
 decoded quality for this transition. The next training objective must add a
 decoded-feature/reward or distribution-matching signal.
 
+The fixed 48-train/12-validation control set was subsequently audited for
+sequence-length coverage. Every sample has a `13x3x3` Stage-1 grid (117 video
+tokens), while the 768x512x241 product path uses `31x8x12` (2,976 tokens), a
+25.4x difference. Therefore those held-out MSE wins never tested the product
+token regime. Before implementing DMD/VSD machinery, run one QKV-only control
+on prompt-disjoint trajectories captured at the exact product Stage-1 grid.
+Use `scripts/split_stage1_manifest_dataset.py` to create hard-linked split
+views only after all nine video boundaries, nine audio boundaries, and the
+condition record exist for every manifest item. Keep the bakery stress prompt
+held out from both splits and retain it as the decoded gate.
+
+That control captured 8 train and 4 prompt-disjoint validation trajectories
+(230 MB) and trained QKV-only rank 4 for 100 steps in 39.0 minutes at 19.5 GB
+peak memory. Product-grid held-out video/audio MSE improved by 19.56%/19.62%,
+with 4/4 wins in both modalities. The real Rapid bakery decode nevertheless
+retained the same visible artifacts and composition drift, while taking 103.22
+seconds (1.702x versus standard). Exact product-grid coverage fixes a genuine
+validation blind spot but does not rescue paired endpoint MSE. Escalate to the
+predeclared decoded-feature/reward or distribution-matching route.
+
+```bash
+python scripts/capture_stage1_trajectories.py \
+  --model /path/to/ltx-2.5-mlx-q8/snapshot \
+  --manifest packages/ltx-trainer/configs/stage1_product_grid_manifest.jsonl \
+  --output /private/tmp/LTX-stage1-product-grid-capture \
+  --low-ram-streaming
+python scripts/split_stage1_manifest_dataset.py \
+  --manifest packages/ltx-trainer/configs/stage1_product_grid_manifest.jsonl \
+  --data /private/tmp/LTX-stage1-product-grid-capture \
+  --output /private/tmp/LTX-stage1-product-grid-split \
+  --bucket product-stage1
+python scripts/train_stage1_segmented_curriculum.py \
+  --model /path/to/ltx-2.5-mlx-q8/snapshot \
+  --data /private/tmp/LTX-stage1-product-grid-split/train \
+  --output-root /private/tmp/LTX-stage1-product-grid-r4 \
+  --span 3-7 --steps 100 --rank 4
+```
+
 Build its fail-closed exact-prefix package with:
 
 ```bash
