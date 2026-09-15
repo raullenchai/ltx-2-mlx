@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+from argparse import ArgumentTypeError
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -8,7 +9,12 @@ import numpy as np
 import pytest
 from safetensors.numpy import save_file
 
-from scripts.render_segmented_stage1_ablation import apply_diagnostic_base_spans
+from ltx_core_mlx.loader.fast_stage1_segmented import FastStage1Segment, FastStage1SegmentedPackage
+from scripts.render_segmented_stage1_ablation import (
+    apply_diagnostic_base_schedule,
+    apply_diagnostic_base_spans,
+    parse_base_schedule,
+)
 from scripts.train_stage1_compressed_curriculum import (
     PHASES,
     PRIMARY_PHASES,
@@ -123,6 +129,44 @@ def test_segmented_ablation_requires_diagnostic_package() -> None:
             ),
             ((3, 5),),
         )
+
+
+def test_segmented_ablation_supports_custom_all_base_schedule() -> None:
+    segment = FastStage1Segment(
+        adapter_path=Path("/model/inert.safetensors"),
+        artifact_sha256="0" * 64,
+        start_index=0,
+        end_index=3,
+        sigma=1.0,
+        target_sigma=0.98125,
+        lora_rank=8,
+        lora_alpha=8.0,
+    )
+    package = FastStage1SegmentedPackage(
+        segments=(segment,),
+        transformer_path=Path("/model/transformer.safetensors"),
+        schedule=(1.0, 0.98125, 0.909375, 0.421875, 0.0),
+        noise_reference_sigmas=(1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0),
+        noise_total_steps=8,
+        base_model_id="model",
+        base_revision="1" * 40,
+        transformer_sha256="2" * 64,
+        transformer_config_sha256="3" * 64,
+        pipeline_family="distilled_two_stage_ltx25",
+        runtime_contract_major=1,
+        qualification_revision="diagnostic-control",
+    )
+    pipe = SimpleNamespace(_fast_stage1_segmented_package=package)
+
+    boundaries = parse_base_schedule("0,1,5,7,8")
+    apply_diagnostic_base_schedule(pipe, boundaries)
+
+    configured = pipe._fast_stage1_segmented_package
+    assert configured.schedule == (1.0, 0.99375, 0.909375, 0.421875, 0.0)
+    assert [(item.start_index, item.end_index) for item in configured.segments] == [(0, 1), (1, 5), (5, 7)]
+    assert pipe._diagnostic_base_stage1_spans == frozenset({(0, 1), (1, 5), (5, 7)})
+    with pytest.raises(ArgumentTypeError, match="0 through 8"):
+        parse_base_schedule("1,5,8")
 
 
 def test_segmented_trainer_exposes_single_span_control(tmp_path: Path) -> None:
