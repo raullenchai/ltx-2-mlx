@@ -166,6 +166,55 @@ original Stage-1 behavior when the flag is absent. A separately qualified
 Stage-2 package can be composed with `--fast-stage2-manifest`; both packages
 must bind to the same base transformer. Neither package is enabled by default.
 
+### Segmented adapters for transition interference
+
+A shared adapter can improve the first three transitions in aggregate while
+still producing a visibly broken decoded sample. Per-transition evaluation is
+the required diagnostic: if checkpoints specialize strongly to their own
+sigma region and regress on later regions, treat that as weight interference,
+not as evidence that the compressed schedule itself is invalid.
+
+The segmented experiment binds a distinct span-v2 adapter to each learned
+transition (`0 -> 3`, `3 -> 5`, and `5 -> 7`) and always executes `7 -> 8`
+with the unchanged base. Package the three source checkpoints in schedule
+order:
+
+```bash
+python scripts/package_segmented_fast_stage1.py \
+  --model-dir /path/to/immutable/model/snapshot \
+  --checkpoint /path/to/qualified-0-3.safetensors \
+  --checkpoint /path/to/qualified-3-5.safetensors \
+  --checkpoint /path/to/qualified-5-7.safetensors \
+  --output-dir /path/to/package \
+  --base-model-id owner/model \
+  --base-revision 0123456789abcdef0123456789abcdef01234567 \
+  --qualification-revision qual-segmented-v1
+```
+
+The packager and runtime fail closed on adapter order, source span metadata,
+rank/shape, artifact digest, immutable base identity, exact sigma schedule,
+and runtime contract. The normal package copies adapters. A
+`--symlink-adapters` mode exists only for scratch diagnostics whose
+qualification revision starts with `diagnostic-`; it must never be distributed.
+
+After placing the manifest and three adapter files beside the bound model,
+invoke it with:
+
+```bash
+python -m ltx_pipelines_mlx.cli generate \
+  --model /path/to/model-with-packages \
+  --distilled \
+  --fast-stage1-segmented-manifest fast-stage1-segmented.json \
+  --fast-stage2-manifest fast-stage2.json \
+  ...
+```
+
+The shared and segmented Stage-1 flags are mutually exclusive. Segmentation
+does not change arithmetic by Mac generation: it loads model-compatible
+artifacts by content contract on any supported Apple Silicon machine. It does
+add three transformer reload boundaries, so only an end-to-end benchmark can
+establish whether four evaluations still deliver the target speedup.
+
 After placing both qualified manifests and adapters in the immutable model
 directory, measure the composed 4+1 path against the unchanged 8+3 path with
 fresh CLI processes, identical prompts and seeds, and randomized run order:
@@ -180,6 +229,9 @@ python scripts/render_combined_fast_blind_suite.py \
   --output-dir /private/tmp/ltx-combined-fast-blind \
   --width 768 --height 512 --frames 241 --frame-rate 24
 ```
+
+For the segmented candidate, replace `--fast-stage1-manifest` with
+`--fast-stage1-segmented-manifest fast-stage1-segmented.json`.
 
 The runner is resumable per completed case. It keeps role mappings and timing
 results in dotfiles so reviewers do not learn which side is fast. Export only

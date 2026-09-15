@@ -62,6 +62,7 @@ def _generation_command(
     frames: int,
     frame_rate: int,
     fast_stage1_manifest: str | None = None,
+    fast_stage1_segmented_manifest: str | None = None,
     fast_stage2_manifest: str | None = None,
 ) -> list[str]:
     command = [
@@ -89,10 +90,16 @@ def _generation_command(
         "--output",
         str(output),
     ]
-    if (fast_stage1_manifest is None) != (fast_stage2_manifest is None):
+    if fast_stage1_manifest is not None and fast_stage1_segmented_manifest is not None:
+        raise ValueError("choose either a shared or segmented fast stage-1 manifest")
+    selected_stage1 = fast_stage1_segmented_manifest or fast_stage1_manifest
+    if (selected_stage1 is None) != (fast_stage2_manifest is None):
         raise ValueError("combined fast qualification requires both manifests")
     if fast_stage1_manifest is not None:
         command.extend(["--fast-stage1-manifest", fast_stage1_manifest])
+    if fast_stage1_segmented_manifest is not None:
+        command.extend(["--fast-stage1-segmented-manifest", fast_stage1_segmented_manifest])
+    if selected_stage1 is not None:
         command.extend(["--fast-stage2-manifest", fast_stage2_manifest])
     return command
 
@@ -168,7 +175,9 @@ def _completed_timing(path: Path) -> dict[str, float] | None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True)
-    parser.add_argument("--fast-stage1-manifest", required=True)
+    stage1 = parser.add_mutually_exclusive_group(required=True)
+    stage1.add_argument("--fast-stage1-manifest")
+    stage1.add_argument("--fast-stage1-segmented-manifest")
     parser.add_argument("--fast-stage2-manifest", required=True)
     parser.add_argument("--runtime-revision", required=True)
     parser.add_argument("--prompts", type=Path, required=True)
@@ -217,6 +226,7 @@ def main() -> int:
                     frames=args.frames,
                     frame_rate=args.frame_rate,
                     fast_stage1_manifest=(args.fast_stage1_manifest if variant == "fast" else None),
+                    fast_stage1_segmented_manifest=(args.fast_stage1_segmented_manifest if variant == "fast" else None),
                     fast_stage2_manifest=(args.fast_stage2_manifest if variant == "fast" else None),
                 )
                 measured[f"{variant}_seconds"] = _run_timed(command)

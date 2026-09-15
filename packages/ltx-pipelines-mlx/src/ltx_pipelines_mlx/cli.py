@@ -228,6 +228,15 @@ examples:
         ),
     )
     gen.add_argument(
+        "--fast-stage1-segmented-manifest",
+        default=None,
+        metavar="FILE",
+        help=(
+            "Experimental --distilled-only segmented stage-1 package manifest inside the model directory. "
+            "Each learned transition uses its bound adapter before an exact clean-base final transition."
+        ),
+    )
+    gen.add_argument(
         "--fast-stage2-manifest",
         default=None,
         metavar="FILE",
@@ -664,8 +673,14 @@ def _cmd_generate(args: argparse.Namespace) -> None:
             "TeaCache (only 8 denoising steps)."
         )
 
-    if (args.fast_stage1_manifest is not None or args.fast_stage2_manifest is not None) and not args.distilled:
-        raise SystemExit("--fast-stage1-manifest/--fast-stage2-manifest require --distilled")
+    if (
+        args.fast_stage1_manifest is not None
+        or args.fast_stage1_segmented_manifest is not None
+        or args.fast_stage2_manifest is not None
+    ) and not args.distilled:
+        raise SystemExit("fast stage manifests require --distilled")
+    if args.fast_stage1_manifest is not None and args.fast_stage1_segmented_manifest is not None:
+        raise SystemExit("choose either --fast-stage1-manifest or --fast-stage1-segmented-manifest")
 
     if sum(map(bool, (args.two_stages_hq, args.two_stage, args.distilled, args.one_stage))) > 1:
         raise SystemExit("Choose at most one of --two-stage, --two-stages-hq, --distilled, --one-stage.")
@@ -723,6 +738,7 @@ def _cmd_generate(args: argparse.Namespace) -> None:
             low_ram_streaming=getattr(args, "low_ram", False),
             tile_count=_build_tile_count_config(args),
             fast_stage1_manifest=args.fast_stage1_manifest,
+            fast_stage1_segmented_manifest=args.fast_stage1_segmented_manifest,
             fast_stage2_manifest=args.fast_stage2_manifest,
         )
         pipe.verbose = not args.quiet

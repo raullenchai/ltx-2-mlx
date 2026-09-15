@@ -63,6 +63,35 @@ def test_generation_command_only_adds_fast_contract_for_fast_variant(tmp_path: P
         "fast-stage2.json",
     ]
 
+    segmented = _generation_command(
+        **common,
+        fast_stage1_segmented_manifest="fast-stage1-segmented.json",
+        fast_stage2_manifest="fast-stage2.json",
+    )
+    assert segmented[-4:] == [
+        "--fast-stage1-segmented-manifest",
+        "fast-stage1-segmented.json",
+        "--fast-stage2-manifest",
+        "fast-stage2.json",
+    ]
+
+
+def test_generation_command_rejects_two_stage1_manifests(tmp_path: Path) -> None:
+    plan = CasePlan(0, "prompt", 42, fast_is_a=False, fast_first=False)
+    with pytest.raises(ValueError, match="either"):
+        _generation_command(
+            model="model",
+            output=tmp_path / "out.mp4",
+            plan=plan,
+            width=768,
+            height=512,
+            frames=241,
+            frame_rate=24,
+            fast_stage1_manifest="fast-stage1.json",
+            fast_stage1_segmented_manifest="fast-stage1-segmented.json",
+            fast_stage2_manifest="fast-stage2.json",
+        )
+
 
 def test_generation_command_rejects_partial_fast_configuration(tmp_path: Path) -> None:
     plan = CasePlan(0, "prompt", 42, fast_is_a=False, fast_first=False)
