@@ -328,3 +328,15 @@ coverage risk: it has only eight samples from four duplicated prompts (watch,
 assembly robot, rain, candle), no human face or speech, plus two owl validation
 samples. Even if independence repairs the chef case, broader prompt/seed
 capture remains mandatory before product qualification.
+
+Upstream `361c4c0` adds a three-checkpoint evaluator that verifies independent
+provenance and evaluates each adapter only on its bound span. `4a3fc30` adds
+targeted single-span training; the full suite passes `772 passed, 22 skipped`.
+A second serialized control is queued after the independent chef render: it
+captures 48 training trajectories from 24 prompts and 12 prompt-disjoint
+validation trajectories from six prompts at the low-cost 468-token shape,
+then retrains only `0 -> 3`. It compares the original and broad-data early
+adapters on the same new validation set and combines the broad early adapter
+with the independent middle/late adapters for the held-out chef decode. This
+keeps the known failing chef prompt/seed out of training while distinguishing
+data under-coverage from cumulative adapter interference.

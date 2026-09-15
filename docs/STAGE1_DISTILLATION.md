@@ -176,8 +176,33 @@ not as evidence that the compressed schedule itself is invalid.
 
 The segmented experiment binds a distinct span-v2 adapter to each learned
 transition (`0 -> 3`, `3 -> 5`, and `5 -> 7`) and always executes `7 -> 8`
-with the unchanged base. Package the three source checkpoints in schedule
-order:
+with the unchanged base. Distinct runtime files are insufficient: every span
+must be trained from the same clean base, not resumed from the preceding
+span. Train all three independent adapters with:
+
+```bash
+python scripts/train_stage1_segmented_curriculum.py \
+  --model /path/to/ltx-2.5-mlx-q8/snapshot \
+  --data /path/to/training/stage1-trajectories \
+  --output-root /private/tmp/LTX-stage1-segmented
+```
+
+Use `--span 0-3` (or another bound span) for a targeted data/objective
+control. This is useful on constrained hosts because it retains only the final
+checkpoint for each selected span. Evaluate the complete set only on its bound
+transitions:
+
+```bash
+python scripts/evaluate_stage1_segmented_curriculum.py \
+  --model /path/to/ltx-2.5-mlx-q8/snapshot \
+  --checkpoint /private/tmp/LTX-stage1-segmented/primary-0-3/checkpoints/lora_weights_step_00100.safetensors \
+  --checkpoint /private/tmp/LTX-stage1-segmented/primary-3-5/checkpoints/lora_weights_step_00080.safetensors \
+  --checkpoint /private/tmp/LTX-stage1-segmented/primary-5-7/checkpoints/lora_weights_step_00080.safetensors \
+  --data /path/to/held-out/stage1-trajectories \
+  --output /private/tmp/LTX-stage1-segmented/evaluation.json
+```
+
+Package the three source checkpoints in schedule order:
 
 ```bash
 python scripts/package_segmented_fast_stage1.py \
@@ -191,9 +216,12 @@ python scripts/package_segmented_fast_stage1.py \
   --qualification-revision qual-segmented-v1
 ```
 
-The packager and runtime fail closed on adapter order, source span metadata,
-rank/shape, artifact digest, immutable base identity, exact sigma schedule,
-and runtime contract. The normal package copies adapters. A
+The packager rejects checkpoints without clean-base `independent` training
+provenance, in addition to failing closed on adapter order, source span
+metadata, rank/shape, artifact digest, immutable base identity, exact sigma
+schedule, and runtime contract. This prevents cumulative shared-curriculum
+checkpoints from being mislabeled as independent segment experts. The normal
+package copies adapters. A
 `--symlink-adapters` mode exists only for scratch diagnostics whose
 qualification revision starts with `diagnostic-`; it must never be distributed.
 
@@ -248,3 +276,12 @@ subjects, narrower seed diversity, altered audio content, or worse audio/video
 synchronization. If noise-coupled supervised transitions still narrow the
 distribution, escalate to stochastic consistency or distribution matching
 rather than increasing LoRA rank against an unsuitable objective.
+
+Training coverage is part of this gate. The first diagnostic cohort contained
+only eight trajectories from four duplicated prompts and no human face or
+speech. A three-adapter candidate trained on that cohort reached 2.079x at
+768x512x241 but omitted the requested front-facing speaker in a chef case; it
+is rejected. Before changing the loss, use a prompt-disjoint broad control
+covering faces, speech, hands, fast motion, camera motion, texture, low light,
+ambience, and silence. Keep the failing prompt and seed out of training so the
+decoded check remains held out.
