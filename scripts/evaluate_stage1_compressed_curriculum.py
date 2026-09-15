@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 from ltx_core_mlx.utils.memory import aggressive_cleanup
+from ltx_pipelines_mlx.scheduler import DISTILLED_SIGMAS
 from ltx_trainer_mlx.model_loader import load_transformer
 from ltx_trainer_mlx.stage1_distillation_evaluator import evaluate_stage1_student, load_stage1_student
 from scripts.train_stage1_compressed_curriculum import PRIMARY_PHASES, Phase
@@ -22,6 +23,7 @@ def percent_change(value: float, baseline: float) -> float | None:
 def metadata_for_phase(checkpoint_metadata: dict[str, str], phase: Phase) -> dict[str, str]:
     """Describe one schedule transition while retaining checkpoint LoRA metadata."""
     metadata = dict(checkpoint_metadata)
+    span_v2 = metadata.get("stage1_curriculum_noise_coupling") == "span-v2"
     metadata.update(
         distillation="stage1_transition",
         stage1_sigma=str(phase.sigma),
@@ -38,16 +40,23 @@ def metadata_for_phase(checkpoint_metadata: dict[str, str], phase: Phase) -> dic
         "stage1_noise_total_steps",
         "stage1_ancestral_eta",
         "stage1_ancestral_s_noise",
+        "stage1_noise_step_end_index",
+        "stage1_noise_reference_sigmas",
     ):
         metadata.pop(key, None)
     if phase.noise_step_index is not None:
         metadata.update(
-            stage1_sampler="ancestral",
+            stage1_sampler="ancestral_span_v2" if span_v2 else "ancestral",
             stage1_noise_step_index=str(phase.noise_step_index),
             stage1_noise_total_steps="8",
             stage1_ancestral_eta="1.0",
             stage1_ancestral_s_noise="1.0",
         )
+        if span_v2:
+            metadata.update(
+                stage1_noise_step_end_index=str(phase.target_index),
+                stage1_noise_reference_sigmas=json.dumps(DISTILLED_SIGMAS),
+            )
     return metadata
 
 
