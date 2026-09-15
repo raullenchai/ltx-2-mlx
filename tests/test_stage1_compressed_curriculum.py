@@ -192,7 +192,7 @@ def test_segmented_trainer_exposes_single_span_control(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    assert "--span {0-3,3-5,5-7}" in result.stdout
+    assert "--span {0-3,3-5,5-7,1-3}" in result.stdout
     assert "--steps STEPS" in result.stdout
 
 
@@ -203,6 +203,10 @@ def test_segmented_trainer_can_scale_one_span_budget() -> None:
     assert phases[0].name == "primary-0-3"
     assert phases[0].steps == 600
     assert phases[0].checkpoint_interval == 600
+
+    diagnostic = select_segment_phases(["1-3"], 100)
+    assert [(phase.start_index, phase.target_index) for phase in diagnostic] == [(1, 3)]
+    assert diagnostic[0].name == "diagnostic-1-3"
 
     with pytest.raises(ValueError, match="exactly one"):
         select_segment_phases(None, 600)

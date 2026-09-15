@@ -30,6 +30,8 @@ except ModuleNotFoundError:  # Direct script execution.
 
 
 SEGMENT_PHASES = PRIMARY_PHASES[:3]
+DIAGNOSTIC_PHASES = (Phase("diagnostic-1-3", 1, 3, 0.99375, 0.98125, 1, 100, 5.0e-5, 20),)
+AVAILABLE_PHASES = SEGMENT_PHASES + DIAGNOSTIC_PHASES
 
 
 def select_segment_phases(spans: list[str] | None, steps: int | None = None) -> tuple[Phase, ...]:
@@ -37,7 +39,7 @@ def select_segment_phases(spans: list[str] | None, steps: int | None = None) -> 
     selected = set(spans or ())
     phases = tuple(
         phase
-        for phase in SEGMENT_PHASES
+        for phase in (AVAILABLE_PHASES if selected else SEGMENT_PHASES)
         if not selected or f"{phase.start_index}-{phase.target_index}" in selected
     )
     if steps is None:
@@ -58,8 +60,8 @@ def main() -> int:
     parser.add_argument(
         "--span",
         action="append",
-        choices=tuple(f"{phase.start_index}-{phase.target_index}" for phase in SEGMENT_PHASES),
-        help="Train only the selected span; repeat for multiple spans (default: all three)",
+        choices=tuple(f"{phase.start_index}-{phase.target_index}" for phase in AVAILABLE_PHASES),
+        help="Train only selected span(s), including diagnostic spans (default: three product spans)",
     )
     parser.add_argument(
         "--steps",
