@@ -519,3 +519,8 @@ Next: owner reviews the three side-by-sides and audio files; Vector repeats the
 same immutable artifact on a second Apple Silicon generation; Atlas decides
 default/public integration only after those pass; reauthenticate `spark2` and
 rerun the PR review loop. Do not upload or default the diagnostic artifact.
+
+The previously separate opt-in dequantized-matmul commit is now included on
+this branch, making the measured combined path reproducible from one source
+revision. Focused combined-path tests pass 40/40; the full workspace suite
+passes 808 with 22 skips.

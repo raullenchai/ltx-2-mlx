@@ -388,3 +388,8 @@ level still require human review. The impact candidate was about 5.3 dB
 quieter than its standard sample. Keep the capability opt-in and describe it
 as approximately 2x until human review and a second Apple Silicon generation
 pass.
+
+The exact-prefix branch now includes the same opt-in dequantized-matmul
+dispatch used by those measurements, so one audited source revision contains
+the complete measured path. Focused combined-path tests pass 40/40 and the
+full workspace suite passes 808 with 22 skips.
