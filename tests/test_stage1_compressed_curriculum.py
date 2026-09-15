@@ -1,3 +1,6 @@
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -12,6 +15,32 @@ from scripts.train_stage1_compressed_curriculum import (
     require_phase_checkpoint,
     validate_phase_checkpoint,
 )
+
+
+def test_evaluator_supports_direct_script_entrypoint(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[1]
+    script = repository / "scripts/evaluate_stage1_compressed_curriculum.py"
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = os.pathsep.join(
+        str(repository / path)
+        for path in (
+            "packages/ltx-core-mlx/src",
+            "packages/ltx-pipelines-mlx/src",
+            "packages/ltx-trainer/src",
+        )
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(script), "--help"],
+        cwd=tmp_path,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Evaluate one shared stage-1 adapter" in result.stdout
 
 
 def test_curriculum_uses_selected_boundaries_and_original_noise_lanes() -> None:

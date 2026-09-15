@@ -11,7 +11,15 @@ from ltx_core_mlx.utils.memory import aggressive_cleanup
 from ltx_pipelines_mlx.scheduler import DISTILLED_SIGMAS
 from ltx_trainer_mlx.model_loader import load_transformer
 from ltx_trainer_mlx.stage1_distillation_evaluator import evaluate_stage1_student, load_stage1_student
-from scripts.train_stage1_compressed_curriculum import PRIMARY_PHASES, Phase
+
+try:
+    from scripts.train_stage1_compressed_curriculum import PRIMARY_PHASES, Phase
+except ModuleNotFoundError as exc:
+    # The qualification driver executes this file directly. In that mode
+    # Python puts scripts/ rather than the repository root on sys.path.
+    if exc.name != "scripts":
+        raise
+    from train_stage1_compressed_curriculum import PRIMARY_PHASES, Phase
 
 
 def percent_change(value: float, baseline: float) -> float | None:
